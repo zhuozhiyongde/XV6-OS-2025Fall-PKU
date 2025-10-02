@@ -32,7 +32,8 @@ int getcwd(char *buf);
 int remove(char *filename);
 int trace(int mask);
 int sysinfo(struct sysinfo *);
-int rename(char *old, char *new);
+int rename(char* old, char* new);
+int shutdown(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

@@ -6,7 +6,18 @@
 #include "kernel/include/fcntl.h"
 #include "xv6-user/user.h"
 
-char *argv[] = { "sh", 0 };
+// char *argv[] = { "sh", 0 };
+char* argv[] = { 0 };
+char* tests[] = {
+  "getcwd",
+  "write",
+  "getpid",
+  "times",
+  "uname",
+};
+
+int counts = sizeof(tests) / sizeof((tests)[0]);
+
 
 int
 main(void)
@@ -21,7 +32,7 @@ main(void)
   dup(0);  // stdout
   dup(0);  // stderr
 
-  for(;;){
+  for(int i = 0; i < counts; i++){
     printf("init: starting sh\n");
     pid = fork();
     if(pid < 0){
@@ -29,8 +40,8 @@ main(void)
       exit(1);
     }
     if(pid == 0){
-      exec("sh", argv);
-      printf("init: exec sh failed\n");
+      exec(tests[i], argv);
+      printf("init: exec %s failed\n", tests[i]);
       exit(1);
     }
 
@@ -49,4 +60,6 @@ main(void)
       }
     }
   }
+  shutdown();
+  return 0;
 }

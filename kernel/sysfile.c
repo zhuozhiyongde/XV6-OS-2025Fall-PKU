@@ -328,41 +328,61 @@ sys_readdir(void)
   return dirnext(f, p);
 }
 
-// get absolute cwd string
-uint64
-sys_getcwd(void)
-{
-  uint64 addr;
-  if (argaddr(0, &addr) < 0)
-    return -1;
 
-  struct dirent *de = myproc()->cwd;
+/**
+ * @brief 实现 getcwd 系统调用
+ * @param addr 路径字符串需要存放到的目标地址
+ * @param size 目标地址大小
+ * @note 这段代码的实现是这样的，先构建一个 path 缓冲区，然后从末尾开始写，形成类似 [ ...垃圾数据... | /home/user\0 ] 这样的路径
+ * @note 然后，再利用 memmove 将这个路径移动到开始，形成 [ /home/user\0 | ...垃圾数据... ] 这样的路径
+ * @note 最后，再利用 copyout2 将这个路径从内核栈中拷贝到用户空间
+ * @return 0 成功，-1 失败
+ */
+uint64
+sys_getcwd(void) {
+  uint64 addr;
+  int size;
+  if (argaddr(0, &addr) < 0 || argint(1, &size) < 0)
+    return NULL;
+
+  struct dirent* de = myproc()->cwd;
   char path[FAT32_MAX_PATH];
-  char *s;
-  int len;
+
+  char* s = path + sizeof(path) - 1;
+  *s = '\0';
 
   if (de->parent == NULL) {
-    s = "/";
-  } else {
-    s = path + FAT32_MAX_PATH - 1;
-    *s = '\0';
+    s--;
+    *s = '/';
+  }
+  else {
     while (de->parent) {
-      len = strlen(de->filename);
+      int len = strlen(de->filename);
       s -= len;
-      if (s <= path)          // can't reach root "/"
-        return -1;
-      strncpy(s, de->filename, len);
-      *--s = '/';
+      if (s < path)
+        return NULL;
+      memmove(s, de->filename, len);
+
+      s--;
+      if (s < path)
+        return NULL;
+      *s = '/';
+
       de = de->parent;
     }
   }
 
-  // if (copyout(myproc()->pagetable, addr, s, strlen(s) + 1) < 0)
-  if (copyout2(addr, s, strlen(s) + 1) < 0)
-    return -1;
-  
-  return 0;
+  memmove(path, s, strlen(s) + 1);
 
+  int path_length = strlen(path) + 1;
+  if (path_length > size) {
+    return NULL;
+  }
+
+  if (copyout2(addr, path, strlen(path) + 1) < 0)
+    return NULL;
+
+  return addr;
 }
 
 // Is the directory dp empty except for "." and ".." ?

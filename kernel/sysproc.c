@@ -10,6 +10,8 @@
 #include "include/kalloc.h"
 #include "include/string.h"
 #include "include/printf.h"
+#include "include/sbi.h"
+#include "include/vm.h"
 
 extern int exec(char *path, char **argv);
 
@@ -152,5 +154,84 @@ sys_trace(void)
     return -1;
   }
   myproc()->tmask = mask;
+  return 0;
+}
+
+/**
+ * @brief 实现 shutdown 系统调用，基于 SBI 调用实现
+ * @return 0 成功，-1 失败
+ */
+uint64
+sys_shutdown(void) {
+  sbi_shutdown();
+  return 0;
+}
+
+/**
+ * @brief 从系统调用参数中获取一个用户空间的目标地址，然后将内核中的某块数据拷贝到这个目标地址去。
+ * @param arg_index 系统调用参数的索引
+ * @param dest 目标地址
+ * @param size 数据大小
+ * @return 0 成功，-1 失败
+ */
+int get_and_copyout(uint64 arg_index, void* dest, int size) {
+  uint64 addr;
+  if (argaddr(arg_index, &addr) < 0) {
+    return -1;
+  }
+  if (copyout2(addr, dest, size) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * @brief 实现 uname 系统调用，返回操作系统名称和版本等信息。
+ * @param addr 目标地址
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_uname(void) {
+  struct uname_info {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+    char domainname[65];
+  };
+
+  // 这个数据当前是准备在内核的栈内存中的
+  struct uname_info info = {
+    "xv6",
+    "xv6-node",
+    "1.0.0",
+    "1.0.0",
+    "arthals",
+    "localhost"
+  };
+
+  if (get_and_copyout(0, (void*)&info, sizeof(info)) < 0) {
+    return -1;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief 实现 times 系统调用，返回自启动以来经过的 tick 数。
+ * @param addr 目标地址
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_times(void) {
+  struct tms tms;
+
+  acquire(&tickslock);
+  tms.tms_utime = tms.tms_stime = tms.tms_cutime = tms.tms_cstime = ticks;
+  release(&tickslock);
+
+  if (get_and_copyout(0, (void*)&tms, sizeof(tms)) < 0) {
+    return -1;
+  }
+
   return 0;
 }
