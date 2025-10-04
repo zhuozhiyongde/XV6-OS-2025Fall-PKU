@@ -15,6 +15,24 @@
 
 extern int exec(char *path, char **argv);
 
+/**
+ * @brief 从系统调用参数（a0-a5寄存器）中获取一个用户空间的目标地址，然后将内核中的某块数据拷贝到这个目标地址去。
+ * @param arg_index 系统调用参数的索引
+ * @param dest 目标地址
+ * @param size 数据大小
+ * @return 0 成功，-1 失败
+ */
+int get_and_copyout(uint64 arg_index, char* src, uint64 size) {
+  uint64 dest_addr;
+  if (argaddr(arg_index, &dest_addr) < 0) {
+    return -1;
+  }
+  if (copyout2(dest_addr, src, size) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 uint64
 sys_exec(void)
 {
@@ -73,10 +91,29 @@ sys_getpid(void)
   return myproc()->pid;
 }
 
+/**
+ * @brief 实现 getppid 系统调用，获取父进程ID。
+ * @return 父进程ID
+ */
+uint64
+sys_getppid(void)
+{
+  return myproc()->parent->pid;
+}
+
+
 uint64
 sys_fork(void)
 {
   return fork();
+}
+
+/**
+ * @brief 实现 clone 系统调用，创建子进程/线程。
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_clone(void) {
+  return clone();
 }
 
 uint64
@@ -85,7 +122,27 @@ sys_wait(void)
   uint64 p;
   if(argaddr(0, &p) < 0)
     return -1;
-  return wait(p);
+  return wait(-1, p);
+}
+
+/**
+ * @brief 实现 waitpid 系统调用，等待子进程结束。
+ * @param pid 子进程ID
+ * @param addr 子进程状态信息存放的目标地址
+ * @param options 等待行为选项
+ * @return 0 成功，-1 失败
+ * @note options 选项：
+ * @note - 0: 默认，阻塞等待到子进程结束
+ * @note - 其他：未实现（面向测试用例编程，笑死）
+ */
+uint64 sys_waitpid(void) {
+  int pid;
+  uint64 addr;
+  int options;
+  if (argint(0, &pid) < 0 || argaddr(1, &addr) < 0 || argint(2, &options) < 0) {
+    return -1;
+  }
+  return wait(pid, addr);
 }
 
 uint64
@@ -121,6 +178,55 @@ sys_sleep(void)
   }
   release(&tickslock);
   return 0;
+}
+
+/**
+ * @brief 实现 nanosleep 系统调用，睡眠指定时间。
+ * @param req_addr 输入参数，指定的睡眠时间结构体 timespec 存放的地址，需要使用 copyin2 从用户空间拷贝到内核空间
+ * @param rem_addr 输出参数，实际睡眠时间结构体 timespec 存放的地址，若实际睡眠时间小于指定睡眠时间，则返回剩余睡眠时间，反之返回 0，需要使用 copyout2 从内核空间拷贝到用户空间
+ * @return 0 成功，-1 失败
+ * @note 注意，根据测试样例的要求，需要睡眠时间以纳秒为单位
+ */
+uint64
+sys_nanosleep(void)
+{
+  uint64 req_addr, rem_addr;
+  struct timespec req_tv; // tv: timeval
+  if (argaddr(0, &req_addr) < 0 || argaddr(1, &rem_addr) < 0) {
+    return -1;
+  }
+  // 从用户空间拷贝到内核空间
+  if (copyin2((char *)&req_tv, req_addr, sizeof(struct timespec)) < 0) {
+    return -1;
+  }
+
+  uint64 target_ticks = req_tv.tv_sec * TICKS_PER_SECOND + req_tv.tv_usec * TICKS_PER_SECOND / 1000000;
+
+  uint64 ticks0;
+  acquire(&tickslock);
+  ticks0 = ticks;
+  while (ticks - ticks0 < target_ticks) {
+    if (myproc()->killed) {
+      // 如果输出参数 rem_addr 不为空，则返回剩余睡眠时间
+      if (rem_addr != NULL) {
+        uint64 elapsed_ticks = ticks - ticks0;
+        uint64 rem_ticks = (target_ticks > elapsed_ticks) ? (target_ticks - elapsed_ticks) : 0;
+        struct timespec rem_tv;
+        rem_tv.tv_sec = rem_ticks / TICKS_PER_SECOND;
+        rem_tv.tv_usec = (rem_ticks % TICKS_PER_SECOND) * 1000000 / TICKS_PER_SECOND;
+        if (copyout2(rem_addr, (char *)&rem_tv, sizeof(struct timespec)) < 0) {
+          release(&tickslock);
+          return -1;
+        }
+      }
+      release(&tickslock);
+      return -1;
+    }
+    sleep(&ticks, &tickslock);
+  }
+  release(&tickslock);
+  return 0;
+
 }
 
 uint64
@@ -168,24 +274,6 @@ sys_shutdown(void) {
 }
 
 /**
- * @brief 从系统调用参数中获取一个用户空间的目标地址，然后将内核中的某块数据拷贝到这个目标地址去。
- * @param arg_index 系统调用参数的索引
- * @param dest 目标地址
- * @param size 数据大小
- * @return 0 成功，-1 失败
- */
-int get_and_copyout(uint64 arg_index, void* dest, int size) {
-  uint64 addr;
-  if (argaddr(arg_index, &addr) < 0) {
-    return -1;
-  }
-  if (copyout2(addr, dest, size) < 0) {
-    return -1;
-  }
-  return 0;
-}
-
-/**
  * @brief 实现 uname 系统调用，返回操作系统名称和版本等信息。
  * @param addr 目标地址
  * @return 0 成功，-1 失败
@@ -210,7 +298,7 @@ uint64 sys_uname(void) {
     "localhost"
   };
 
-  if (get_and_copyout(0, (void*)&info, sizeof(info)) < 0) {
+  if (get_and_copyout(0, (char *)&info, sizeof(info)) < 0) {
     return -1;
   }
 
@@ -218,8 +306,8 @@ uint64 sys_uname(void) {
 }
 
 /**
- * @brief 实现 times 系统调用，返回自启动以来经过的 tick 数。
- * @param addr 目标地址
+ * @brief 实现 times 系统调用，返回自启动以来经过的操作系统 tick 数。
+ * @param addr tms 结构体存到的目标地址
  * @return 0 成功，-1 失败
  */
 uint64 sys_times(void) {
@@ -229,9 +317,38 @@ uint64 sys_times(void) {
   tms.tms_utime = tms.tms_stime = tms.tms_cutime = tms.tms_cstime = ticks;
   release(&tickslock);
 
-  if (get_and_copyout(0, (void*)&tms, sizeof(tms)) < 0) {
+  if (get_and_copyout(0, (char *)&tms, sizeof(tms)) < 0) {
     return -1;
   }
 
+  return 0;
+}
+
+/**
+ * @brief 实现 gettimeofday 系统调用，获取当前时间。
+ * @param addr timespec 结构体存到的目标地址
+ * @return 0 成功，-1 失败
+ * @note 注意，根据测试样例的要求，需要返回 tv_usec 微秒而不是 Linux 标准中的 tv_nsec 纳秒
+ */
+uint64 sys_gettimeofday(void) {
+  struct timespec ts;
+  uint64 htick = r_time(); // 硬件(hardware) tick，注意全局变量 ticks 是操作系统(os) tick，中间差了 200 倍
+
+  ts.tv_sec = htick / CLOCK_FREQ; // 换算成秒
+  ts.tv_usec = (htick % CLOCK_FREQ) * 1000000 / CLOCK_FREQ; // 换算成微秒, 1μs = 10^-6 s
+
+  if (get_and_copyout(0, (char *)&ts, sizeof(ts)) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+
+/**
+ * @brief 实现 sched_yield 系统调用，主动让出CPU。
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_sched_yield(void) {
+  yield();
   return 0;
 }

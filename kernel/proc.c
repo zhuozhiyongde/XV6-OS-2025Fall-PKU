@@ -13,6 +13,7 @@
 #include "include/file.h"
 #include "include/trap.h"
 #include "include/vm.h"
+#include "include/syscall.h"
 
 
 struct cpu cpus[NCPU];
@@ -381,6 +382,76 @@ fork(void)
   return pid;
 }
 
+/**
+ * @brief 实现 clone 系统调用，创建子进程。
+ * @param a1 寄存器存放用户指定的栈指针
+ * @return 0 成功，-1 失败
+ * @note 注意，首先测试样例里采用的 clone 签名与 Linux 标准不同
+ * @note 其次，clone() 与 fork() 的不同之处在于，clone() 允许子进程直接开始执行一个新指定的函数，并且调用者必须手动为子进程分配栈空间，并将其地址作为参数传递给 clone() 系统调用。
+ * @note 这就是为什么，我们相比 fork() 需要从陷阱帧的 a1 寄存器中获取到 stack 参数并进行判断是否非零
+ * @note fork() 函数等价于 clone(fn=NULL)
+ */
+int
+clone(void)
+{
+  int i, pid;
+  struct proc *np;
+  struct proc* p = myproc();
+  uint64 stack;
+
+  // Allocate process.
+  if((np = allocproc()) == NULL){
+    return -1;
+  }
+
+  // Copy user memory from parent to child.
+  if(uvmcopy(p->pagetable, np->pagetable, np->kpagetable, p->sz) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+  np->sz = p->sz;
+
+  np->parent = p;
+
+  // copy tracing mask from parent.
+  np->tmask = p->tmask;
+
+  // copy saved user registers.
+  *(np->trapframe) = *(p->trapframe);
+
+  // 以下为相较于 fork() 的额外修改
+  argaddr(1, &stack);
+  // 如果 stack 非零，则说明用户指定了栈指针，我们需要在栈指针上获取到需要执行的 fn 和 arg 参数
+  // 这段内存分布可以从 clone 测试样例反汇编出的汇编代码中推理得到，在笔记中有详细展开
+  if (stack != NULL) {
+    uint64 fn = *((uint64*)stack);
+    uint64 arg = *((uint64*)((char*)stack + 8));
+    np->trapframe->sp = stack;
+    np->trapframe->epc = fn;
+    np->trapframe->a1 = arg;
+  }
+
+  // Cause fork to return 0 in the child.
+  np->trapframe->a0 = 0;
+
+  // increment reference counts on open file descriptors.
+  for(i = 0; i < NOFILE; i++)
+    if(p->ofile[i])
+      np->ofile[i] = filedup(p->ofile[i]);
+  np->cwd = edup(p->cwd);
+
+  safestrcpy(np->name, p->name, sizeof(p->name));
+
+  pid = np->pid;
+
+  np->state = RUNNABLE;
+
+  release(&np->lock);
+
+  return pid;
+}
+
 // Pass p's abandoned children to init.
 // Caller must hold p->lock.
 void
@@ -473,11 +544,21 @@ exit(int status)
 
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
+/**
+ * @brief 等待子进程结束，并返回子进程的pid。
+ * @param wpid 等待的子进程ID
+ * @param addr 子进程状态信息存放的目标地址
+ * @return 子进程的pid，-1 失败
+ * @note wpid 选项：
+ * @note - >0: 等待指定的子进程
+ * @note - -1: 等待任意子进程
+ * @note - 其他：未实现
+ */
 int
-wait(uint64 addr)
+wait(int wpid, uint64 addr)
 {
   struct proc *np;
-  int havekids, pid;
+  int havekids, pid, status;
   struct proc *p = myproc();
 
   // hold p->lock for the whole time to avoid lost
@@ -491,7 +572,12 @@ wait(uint64 addr)
       // this code uses np->parent without holding np->lock.
       // acquiring the lock first would cause a deadlock,
       // since np might be an ancestor, and we already hold p->lock.
-      if(np->parent == p){
+      if (np->parent == p) {
+        // 指定了等待的子进程，但是不是当前子进程，则继续寻找
+        if (wpid > 0 && np->pid != wpid) {
+          havekids = 1; // 仍然有子进程，但不是参数 wpid 指定的子进程
+          continue;
+        }
         // np->parent can't change between the check and the acquire()
         // because only the parent changes it, and we're the parent.
         acquire(&np->lock);
@@ -499,7 +585,12 @@ wait(uint64 addr)
         if(np->state == ZOMBIE){
           // Found one.
           pid = np->pid;
-          if(addr != 0 && copyout2(addr, (char *)&np->xstate, sizeof(np->xstate)) < 0) {
+          // 在标准 POSIX 规范中，wstatus 是一个位域（bitfield）
+          // 低 8 位：如果子进程是被信号终止或停止的，这里存储了信号编号。
+          // 高 8 位：如果子进程正常终止，这里存储了退出状态码。
+          // 所以，这里我们需要左移 8 位，才能通过 waitpid 中的 WEXITSTATUS(wstatus) == 3 宏检查
+          status = np->xstate << 8;
+          if (addr != 0 && copyout2(addr, (char*)&status, sizeof(status)) < 0) {
             release(&np->lock);
             release(&p->lock);
             return -1;

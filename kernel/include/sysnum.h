@@ -29,7 +29,7 @@
 #define SYS_exec       221   // 执行新程序
 #define SYS_exit        93   // 终止当前进程
 #define SYS_wait         3   // 等待子进程结束
-#define SYS_wait4      260   // 等待子进程结束（更通用的版本）
+#define SYS_waitpid    260   // 等待子进程结束（更通用的版本）
 #define SYS_kill         6   // 向进程发送信号
 #define SYS_getpid     172   // 获取当前进程ID
 #define SYS_getppid    173   // 获取父进程ID

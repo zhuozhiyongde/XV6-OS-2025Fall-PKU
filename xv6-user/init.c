@@ -9,11 +9,23 @@
 // char *argv[] = { "sh", 0 };
 char* argv[] = { 0 };
 char* tests[] = {
+  // part 1
   "getcwd",
   "write",
   "getpid",
   "times",
   "uname",
+  // part 3
+  "wait",
+  "waitpid",
+  "clone",
+  "fork",
+  "execve",
+  "getppid",
+  "exit",
+  "yield",
+  "gettimeofday",
+  "sleep",
 };
 
 int counts = sizeof(tests) / sizeof((tests)[0]);

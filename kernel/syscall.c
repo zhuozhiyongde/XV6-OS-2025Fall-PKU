@@ -120,6 +120,12 @@ extern uint64 sys_rename(void);
 extern uint64 sys_shutdown(void);
 extern uint64 sys_uname(void);
 extern uint64 sys_times(void);
+extern uint64 sys_sched_yield(void);
+extern uint64 sys_clone(void);
+extern uint64 sys_waitpid(void);
+extern uint64 sys_getppid(void);
+extern uint64 sys_gettimeofday(void);
+extern uint64 sys_nanosleep(void);
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
@@ -151,6 +157,12 @@ static uint64 (*syscalls[])(void) = {
   [SYS_shutdown]    sys_shutdown,
   [SYS_uname]       sys_uname,
   [SYS_times]       sys_times,
+  [SYS_sched_yield] sys_sched_yield,
+  [SYS_clone]       sys_clone,
+  [SYS_waitpid]     sys_waitpid,
+  [SYS_getppid]     sys_getppid,
+  [SYS_gettimeofday] sys_gettimeofday,
+  [SYS_nanosleep] sys_nanosleep,
 };
 
 static char *sysnames[] = {
@@ -183,6 +195,12 @@ static char *sysnames[] = {
   [SYS_shutdown]    "shutdown",
   [SYS_uname]       "uname",
   [SYS_times]       "times",
+  [SYS_sched_yield] "sched_yield",
+  [SYS_clone]       "clone",
+  [SYS_waitpid]     "waitpid",
+  [SYS_getppid]     "getppid",
+  [SYS_gettimeofday] "gettimeofday",
+  [SYS_nanosleep]   "nanosleep",
 };
 
 void

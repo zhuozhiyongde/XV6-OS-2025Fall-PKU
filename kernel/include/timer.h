@@ -9,8 +9,20 @@ extern struct spinlock tickslock;
 // 简而言之就是每次时钟中断时触发，上锁修改，然后设置下一次中断时间，如此递归
 extern uint ticks;
 
-// 用于 sys_times 系统调用所定义的结构体
-// ref: https://man7.org/linux/man-pages/man2/times.2.html
+/**
+ * 用于 sys_gettimeofday 系统调用所定义的结构体
+ * ref: https://man7.org/linux/man-pages/man2/gettimeofday.2.html
+ * ref: https://github.com/oscomp/testsuits-for-oskernel/blob/pre-2024/riscv-syscalls-testing/user/lib/syscall.c#L84
+ */
+struct timespec {
+    long tv_sec; // 秒
+    long tv_usec; // 微秒，1μs = 10^-6 s
+};
+
+/**
+ * 用于 sys_times 系统调用所定义的结构体
+ * ref: https://man7.org/linux/man-pages/man2/times.2.html
+ */
 struct tms {
     long tms_utime; // 用户态时间，user time
     long tms_stime; // 系统态时间，system time
