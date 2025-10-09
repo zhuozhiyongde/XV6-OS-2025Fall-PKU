@@ -478,15 +478,30 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   return 0;
 }
 
+/*
 int
 copyin2(char *dst, uint64 srcva, uint64 len)
 {
   uint64 sz = myproc()->sz;
-  if (srcva + len > sz || srcva >= sz) {
+  if (srcva + len > sz || srcva >= sz) { // bug: 无法处理映射页表
     return -1;
   }
   memmove(dst, (void *)srcva, len);
   return 0;
+} */
+
+/**
+ * @brief 修复版 copyin2，用于将用户空间的数据拷贝到内核空间
+ * @param dst 目标地址（内核空间）
+ * @param srcva 源地址（用户空间）
+ * @param len 长度
+ * @return 0 成功，-1 失败
+ * @note 修复了 copyin2 的边界检查问题，即 sz 是堆的上边界（堆顶之后紧接着的第一个无效地址），但是我们可能会从 mmap 的映射区中进行数据读取，从而导致越界，所以这里直接改为 copyin 的简单封装
+ */
+int
+copyin2(char* dst, uint64 srcva, uint64 len) {
+  pagetable_t pagetable = myproc()->pagetable;
+  return copyin(pagetable, dst, srcva, len);
 }
 
 // Copy a null-terminated string from user to kernel.

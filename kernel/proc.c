@@ -425,8 +425,17 @@ clone(void)
   // 如果 stack 非零，则说明用户指定了栈指针，我们需要在栈指针上获取到需要执行的 fn 和 arg 参数
   // 这段内存分布可以从 clone 测试样例反汇编出的汇编代码中推理得到，在笔记中有详细展开
   if (stack != NULL) {
-    uint64 fn = *((uint64*)stack);
-    uint64 arg = *((uint64*)((char*)stack + 8));
+    uint64 fn, arg;
+    // 从用户指定的栈中读取 fn 和 arg
+    // 注意：这里需要确保 stack 是有效的用户地址
+    // 注意 copyin 比 copyin2 更安全，未修改前 copyin2 只做了简单的边界检查 srcva + len > sz
+    // 而 sz 与映射页表无关，从而无法处理映射页表
+    if (copyin(p->pagetable, (char*)&fn, stack, sizeof(fn)) < 0 ||
+      copyin(p->pagetable, (char*)&arg, stack + 8, sizeof(arg)) < 0) {
+      freeproc(np);
+      release(&np->lock);
+      return -1;
+    }
     np->trapframe->sp = stack;
     np->trapframe->epc = fn;
     np->trapframe->a1 = arg;
