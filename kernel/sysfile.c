@@ -20,7 +20,101 @@
 #include "include/string.h"
 #include "include/printf.h"
 #include "include/vm.h"
+#include "include/fcntl.h"
 
+/**
+ * @brief 递归地获取一个目录条目的绝对路径。
+ * @param de        目标目录条目。
+ * @param path_buf  用于存储结果的输出缓冲区。
+ * @param buf_size  缓冲区的总大小。
+ * @return 成功返回 0，失败返回 -1。
+ */
+static int get_abspath(struct dirent* de, char* path_buf, int buf_size) {
+  // 递归退出，已经到达根目录
+  if (de == NULL || de->parent == NULL) {
+    if (buf_size < 2) {
+      return -1;
+    }
+    strncpy(path_buf, "/", buf_size);
+    return 0;
+  }
+  if (get_abspath(de->parent, path_buf, buf_size) < 0) {
+    return -1;
+  }
+  int parent_len = strlen(path_buf);
+
+  // 非根目录需要追加一个 /
+  if (parent_len > 1) {
+    if (parent_len + 1 >= buf_size) {
+      return -1;
+    }
+    path_buf[parent_len++] = '/';
+    path_buf[parent_len] = '\0';
+  }
+
+  safestrcpy(path_buf + parent_len, de->filename, buf_size - parent_len);
+  return 0;
+}
+
+/**
+ * @brief 将路径参数安全地转换为绝对路径。
+ * @param path  输入的路径字符串 (in)，转换后的绝对路径 (out)。缓冲区大小应为 FAT32_MAX_PATH。
+ * @param fd    目录文件描述符 dirfd。
+ * @return 成功返回 0，失败返回 -1。
+ */
+int get_path(char* path, int fd) {
+  if (path == NULL) {
+    return -1;
+  }
+  // 绝对路径无需处理
+  if (path[0] == '/') {
+    return 0;
+  }
+  // 预处理 './'
+  if (path[0] == '.' && path[1] == '/') {
+    path += 2;
+  }
+  char base_path[FAT32_MAX_PATH];
+  struct dirent* base_de = NULL;
+  // 相对当前目录进行定位
+  if (fd == AT_FDCWD) {
+    base_de = myproc()->cwd;
+  }
+  // 相对于指定的 fd 定位
+  else {
+    if (fd < 0 || fd >= NOFILE) {
+      return -1;
+    }
+    struct file* f = myproc()->ofile[fd];
+    if (f == NULL || !(f->ep->attribute & ATTR_DIRECTORY)) {
+      return -1;
+    }
+    base_de = f->ep;
+  }
+  // 获取绝对路径
+  if (get_abspath(base_de, base_path, FAT32_MAX_PATH) < 0) {
+    return -1;
+  }
+  // 使用一个临时缓冲区来安全地拼接最终路径
+  char final_path[FAT32_MAX_PATH];
+
+  safestrcpy(final_path, base_path, FAT32_MAX_PATH);
+  int base_len = strlen(final_path);
+
+  // 非根目录需要追加一个 /
+  if (base_len > 1) {
+    if (base_len + 1 >= sizeof(final_path)) {
+      return -1;
+    }
+    final_path[base_len++] = '/';
+    final_path[base_len] = '\0';
+  }
+
+  safestrcpy(final_path + base_len, path, FAT32_MAX_PATH - base_len);
+  safestrcpy(path, final_path, FAT32_MAX_PATH);
+
+  return 0;
+}
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -181,7 +275,8 @@ sys_open(void)
       return -1;
     }
     elock(ep);
-    if((ep->attribute & ATTR_DIRECTORY) && omode != O_RDONLY){
+    // 下面这行需要修改，参见 openat 处的注释
+    if((ep->attribute & ATTR_DIRECTORY) && (omode & (O_WRONLY | O_RDWR))){
       eunlock(ep);
       eput(ep);
       return -1;
@@ -206,6 +301,89 @@ sys_open(void)
   f->ep = ep;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+
+  eunlock(ep);
+
+  return fd;
+}
+
+/**
+ * @brief 实现 openat 系统调用
+ * @param dirfd 目录文件描述符
+ * @param path 文件路径
+ * @param flags 标志位，等于原 open 函数的 omode
+ * @param mode 模式，规定当文件被新创建时应有的文件权限
+ * @return 文件描述符
+ * @note openat 相较于 open 多了一个参数，即目录文件描述符，它会根据 dirfd + path 来确定文件绝对路径，然后复用 open 的逻辑
+ * @note sys_open: 相对路径基于当前工作目录，或直接使用绝对路径。
+ * @note sys_openat: 相对路径基于指定的 fd 所代表的目录，或直接使用绝对路径。
+ */
+uint64
+sys_openat(void) {
+  char path[FAT32_MAX_PATH];
+  int dirfd, flags, mode, fd;
+  struct file* f;
+  struct dirent* ep;
+
+  if (
+    argint(0, &dirfd) < 0 ||
+    argstr(1, path, FAT32_MAX_PATH) < 0 ||
+    argint(2, &flags) < 0 ||
+    argint(3, &mode) < 0
+    ) {
+    return -1;
+  }
+
+  if (strlen(path) == 0) {
+    return -1;
+  }
+
+  if (get_path(path, dirfd) < 0) {
+    return -1;
+  }
+
+  if (flags & O_CREATE) {
+    ep = create(path, T_FILE, mode);
+    if (ep == NULL) {
+      return -1;
+    }
+  }
+  else {
+    if ((ep = ename(path)) == NULL) {
+      return -1;
+    }
+    elock(ep);
+    // 注意下面这行，目的是：如果一个文件是目录，那么禁止任何带有“写”意图的打开方式
+    // 这里需要修改第二个条件，判断是否可写的条件从 flags != O_RDONLY 改为 flags & (O_WRONLY | O_RDWR)
+    // 测试发现传入的 ep->attribute 为 16，也就是 ATTR_DIRECTORY 0x10
+    // 如果使用 flags != O_RDONLY 得到 1 导致判断为真，导致返回 -1
+    // 如果使用 flags & (O_WRONLY | O_RDWR) 得到 0x10 & (0x01 | 0x02) = 0，导致判断为假，不会返回 -1
+    // 对于 open() 在此处的判断类似
+    if ((ep->attribute & ATTR_DIRECTORY) && (flags & (O_WRONLY | O_RDWR))) {
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+  }
+
+  if ((f = filealloc()) == NULL || (fd = fdalloc(f)) < 0) {
+    if (f) {
+      fileclose(f);
+    }
+    eunlock(ep);
+    eput(ep);
+    return -1;
+  }
+
+  if (!(ep->attribute & ATTR_DIRECTORY) && (flags & O_TRUNC)) {
+    etrunc(ep);
+  }
+
+  f->type = FD_ENTRY;
+  f->off = (flags & O_APPEND) ? ep->file_size : 0;
+  f->ep = ep;
+  f->readable = !(flags & O_WRONLY);
+  f->writable = (flags & O_WRONLY) || (flags & O_RDWR);
 
   eunlock(ep);
 

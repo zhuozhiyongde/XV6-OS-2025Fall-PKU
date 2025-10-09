@@ -5,7 +5,8 @@
 
 
 // Filesystem related (文件系统相关)
-#define SYS_open        56   // 打开文件
+#define SYS_open        55   // 打开文件，基于当前目录或者直接使用绝对路径
+#define SYS_openat      56   // 打开文件，基于指定的 fd 所代表的目录或者直接使用绝对路径
 #define SYS_close       57   // 关闭文件
 #define SYS_read        63   // 从文件读取数据
 #define SYS_write       64   // 向文件写入数据

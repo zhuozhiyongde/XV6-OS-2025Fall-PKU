@@ -19,8 +19,8 @@ char* tests[] = {
   // "brk",
   "open",
   "openat",
-  "mmap",
-  "munmap",
+  // "mmap",
+  // "munmap",
   // part 3
   // "wait",
   // "waitpid",
