@@ -1,0 +1,9 @@
+services:
+  xv6-os:
+    image: docker.educg.net/cg/os-contest:2024p6
+    command: tail -f /dev/null
+    working_dir: /xv6
+    volumes:
+      - ./:/xv6
+    privileged: true
+    container_name: xv6-os
