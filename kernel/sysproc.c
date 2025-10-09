@@ -159,6 +159,34 @@ sys_sbrk(void)
   return addr;
 }
 
+/**
+ * @brief 实现 brk 系统调用，用于调整程序数据段（Heap，堆）的大小。
+ * @param addr 新的数据段结束地址
+ * @return 0 成功，-1 失败，特别地，brk(0) 返回当前堆的终点地址
+ * @note 注意 brk(break) 是直接设置堆的终点，而 sbrk(shift break) 是按照指定增量（可正可负）调整堆的大小。
+ */
+uint64 sys_brk(void) {
+  uint64 addr, new_addr;
+  int delta;
+
+  if (argaddr(0, &new_addr) < 0) {
+    return -1;
+  }
+
+  addr = myproc()->sz;
+
+  if (new_addr == 0) {
+    return addr;
+  }
+
+  delta = new_addr - addr;
+
+  if (growproc(delta) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
 uint64
 sys_sleep(void)
 {
@@ -352,3 +380,4 @@ uint64 sys_sched_yield(void) {
   yield();
   return 0;
 }
+

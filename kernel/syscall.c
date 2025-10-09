@@ -126,6 +126,7 @@ extern uint64 sys_waitpid(void);
 extern uint64 sys_getppid(void);
 extern uint64 sys_gettimeofday(void);
 extern uint64 sys_nanosleep(void);
+extern uint64 sys_brk(void);
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
@@ -163,6 +164,9 @@ static uint64 (*syscalls[])(void) = {
   [SYS_getppid]     sys_getppid,
   [SYS_gettimeofday] sys_gettimeofday,
   [SYS_nanosleep] sys_nanosleep,
+  [SYS_brk]       sys_brk,
+  // [SYS_munmap]    sys_munmap,
+  // [SYS_mmap]      sys_mmap,
 };
 
 static char *sysnames[] = {
@@ -201,6 +205,9 @@ static char *sysnames[] = {
   [SYS_getppid]     "getppid",
   [SYS_gettimeofday] "gettimeofday",
   [SYS_nanosleep]   "nanosleep",
+  [SYS_brk]       "brk",
+  // [SYS_munmap]    "munmap",
+  // [SYS_mmap]      "mmap",
 };
 
 void

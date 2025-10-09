@@ -10,22 +10,28 @@
 char* argv[] = { 0 };
 char* tests[] = {
   // part 1
-  "getcwd",
-  "write",
-  "getpid",
-  "times",
-  "uname",
+  // "getcwd",
+  // "write",
+  // "getpid",
+  // "times",
+  // "uname",
+  // part 2
+  // "brk",
+  "open",
+  "openat",
+  "mmap",
+  "munmap",
   // part 3
-  "wait",
-  "waitpid",
-  "clone",
-  "fork",
-  "execve",
-  "getppid",
-  "exit",
-  "yield",
-  "gettimeofday",
-  "sleep",
+  // "wait",
+  // "waitpid",
+  // "clone",
+  // "fork",
+  // "execve",
+  // "getppid",
+  // "exit",
+  // "yield",
+  // "gettimeofday",
+  // "sleep",
 };
 
 int counts = sizeof(tests) / sizeof((tests)[0]);

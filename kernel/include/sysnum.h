@@ -42,6 +42,8 @@
 // Memory management related (内存管理相关)
 #define SYS_sbrk        12   // 调整程序数据段（堆）的大小
 #define SYS_brk        214   // 直接设置程序数据段的结束地址
+#define SYS_munmap     215   // 释放内存映射
+#define SYS_mmap       222   // 映射文件或设备到内存
 
 
 // Others (其他)
