@@ -157,6 +157,11 @@ found:
     return NULL;
   }
 
+  // vma 初始化
+  for (int i = 0; i < NVMA; i++) {
+    p->vmas[i].valid = 0;
+  }
+
   p->kstack = VKSTACK;
 
   // Set up new context to start executing at forkret,
@@ -373,6 +378,17 @@ fork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  // 父子进程应当具有相同的 vma，进行拷贝
+  // 需要在设置 RUNNABLE 之前进行
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].valid) {
+      np->vmas[i] = p->vmas[i];
+      if (np->vmas[i].vm_file) {
+        filedup(np->vmas[i].vm_file);
+      }
+    }
+  }
+
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -452,6 +468,16 @@ clone(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  // 类似 fork 进行修改
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].valid) {
+      np->vmas[i] = p->vmas[i];
+      if (np->vmas[i].vm_file) {
+        filedup(np->vmas[i].vm_file);
+      }
+    }
+  }
+
   pid = np->pid;
 
   np->state = RUNNABLE;
@@ -509,6 +535,9 @@ exit(int status)
 
   eput(p->cwd);
   p->cwd = 0;
+
+  // 在进程变成 ZOMBIE 之前，释放所有 VMA
+  vma_free(p);
 
   // we might re-parent a child to init. we can't be precise about
   // waking up init, since we can't acquire its lock once we've

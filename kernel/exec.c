@@ -157,6 +157,19 @@ int exec(char *path, char **argv)
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
+
+  // 在释放旧页表之前，清理所有旧的 VMA
+  for (i = 0; i < NVMA; i++) {
+    struct vma* v = &p->vmas[i];
+    if (v->valid) {
+      if (v->vm_file) {
+        fileclose(v->vm_file);
+        v->vm_file = NULL;
+      }
+    }
+    v->valid = 0;
+  }
+
   proc_freepagetable(oldpagetable, oldsz);
   w_satp(MAKE_SATP(p->kpagetable));
   sfence_vma();

@@ -218,29 +218,47 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   return 0;
 }
 
-// Remove npages of mappings starting from va. va must be
-// page-aligned. The mappings must exist.
-// Optionally free the physical memory.
+/**
+ * @brief 移除从 va 开始的 npages 个页面的映射。va 必须页对齐
+ * @param pagetable 目标用户页表
+ * @param va 要取消映射的起始虚拟地址，必须页对齐
+ * @param npages 要取消映射的页面数量
+ * @param do_free 如果为 1，则释放页面对应的物理内存；如果为 0，则只取消映射
+ * @note 在原有基础上进行修改以支持懒加载（Lazy Allocation）
+ * @note 如果一个页面因为从未被访问而尚未建立映射，本函数会静默地跳过，而不会触发 panic
+ */
 void
 vmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
 
-  if((va % PGSIZE) != 0)
+  // 检查起始地址是否页对齐
+  if ((va % PGSIZE) != 0)
     panic("vmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
-      panic("vmunmap: walk");
-    if((*pte & PTE_V) == 0)
-      panic("vmunmap: not mapped");
-    if(PTE_FLAGS(*pte) == PTE_V)
+  // 遍历所有需要取消映射的页面地址
+  for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
+    // 尝试查找该虚拟地址对应的页表项(PTE)，不分配新的页目录（alloc=0）。
+    pte = walk(pagetable, a, 0);
+
+    // 懒加载时，mmap 区域直到被访问前，其页表项甚至中间的页目录都可能不存在
+    // 所以，如果 walk 返回 NULL，即页表项不存在（没创建），或者 PTE 的有效位为 0（页尚未映射），都是正常的
+    if (pte == 0 || (*pte & PTE_V) == 0) {
+      // 继续找下一个页面，忽略未映射的页面，不触发 panic
+      continue;
+    }
+    // 页面被映射，但是不是叶子节点，说明页表结构有问题
+    if (PTE_FLAGS(*pte) == PTE_V) {
       panic("vmunmap: not a leaf");
-    if(do_free){
+    }
+    // 如果 do_free 标志被设置，则释放该页表项指向的物理内存
+    if (do_free) {
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
+
+    // 将页表项清零，使其无效，完成取消映射
     *pte = 0;
   }
 }
@@ -662,4 +680,102 @@ void vmprint(pagetable_t pagetable)
     }
   }
   return;
+}
+
+
+/**
+ * @brief 将 VMA 中的数据写回物理内存
+ * @param p 进程 PCB 指针
+ * @param v 要写回的 VMA 指针
+ */
+void vma_writeback(struct proc* p, struct vma* v) {
+  if (v->valid == 0) {
+    return;
+  }
+
+  if (!(v->flags & MAP_SHARED) || !(v->prot & PROT_WRITE) || !(v->vm_file)) {
+    return;
+  }
+
+  if (v->vm_file->writable == 0) {
+    return;
+  }
+
+  for (uint64 va = v->start; va < v->end; va += PGSIZE) {
+    uint64 pa = walkaddr(p->pagetable, va);
+    if (pa == 0) {
+      continue;
+    }
+    uint64 file_offset = v->offset + (va - v->start);
+    elock(v->vm_file->ep);
+    ewrite(v->vm_file->ep, 0, pa, file_offset, PGSIZE);
+    eunlock(v->vm_file->ep);
+  }
+}
+
+
+/**
+ * @brief 释放进程的 VMA
+ * @param p 进程 PCB 指针
+ */
+void vma_free(struct proc* p) {
+  for (int i = 0; i < NVMA; i++) {
+    struct vma* v = &p->vmas[i];
+    if (v->valid) {
+      // 将 VMA 中的数据写回物理内存
+      // 只有当 VMA 是共享映射，并且是可写，并且是文件映射时，才需要写回物理内存
+      vma_writeback(p, v);
+      // 取消映射并决定是否释放物理页
+      // 如果是共享映射(MAP_SHARED)，则不释放物理内存，
+      // 否则（私有或匿名映射）则释放。
+      int do_free = (v->flags & MAP_SHARED) ? 0 : 1;
+      vmunmap(p->pagetable, v->start, (v->end - v->start) / PGSIZE, do_free);
+
+      // 如果是文件映射，关闭文件
+      if (v->vm_file) {
+        fileclose(v->vm_file);
+        v->vm_file = NULL;
+      }
+
+      v->valid = 0;
+    }
+  }
+}
+
+
+/**
+ * @brief 在进程的地址空间中找到一个可用的地址，用于映射文件
+ * @param p 进程 PCB 指针
+ * @param len 需要映射的长度，是一个 PGSIZE=4096 的整倍数
+ * @return 找到的地址，0 表示失败
+ * @note 从 MMAPBASE 开始向下搜索，直到找到一个足够大的、不与现有 VMA 或堆栈冲突的空闲区域
+ */
+uint64 mmap_find_addr(struct proc* p, uint64 len) {
+  uint64 addr = MMAPBASE;
+
+  if (len % PGSIZE != 0) {
+    return 0;
+  }
+
+  while (1) {
+    addr -= len;
+
+    // 如果一直找到了和栈顶重叠，则返回失败
+    if (addr < p->sz) {
+      return 0;
+    }
+
+    int conflict = 0;
+    for (int i = 0; i < NVMA; i++) {
+      struct vma* v = &p->vmas[i];
+      if (v->valid && v->start <= addr && v->end >= addr) {
+        conflict = 1;
+        addr = v->start;
+        break;
+      }
+    }
+    if (!conflict) {
+      return addr;
+    }
+  }
 }

@@ -12,6 +12,9 @@
 #include "include/console.h"
 #include "include/timer.h"
 #include "include/disk.h"
+#include "include/vm.h"
+#include "include/kalloc.h"
+#include "include/string.h"
 
 extern char trampoline[], uservec[], userret[];
 
@@ -81,10 +84,95 @@ usertrap(void)
     // ok
   } 
   else {
-    printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    // trapframedump(p->trapframe);
-    p->killed = 1;
+    // 获取触发异常的原因和地址
+    uint64 scause = r_scause();
+    uint64 stval = r_stval(); // stval 寄存器保存了导致异常的地址
+
+    // 检查是否为缺页异常
+    // 13: Load page fault (读缺页)
+    // 15: Store/AMO page fault (写缺页)
+    // 12: Instruction page fault (取指缺页)
+    if (scause == 12 || scause == 13 || scause == 15) {
+      // 在当前进程的 VMA 列表中查找包含 stval 的区域
+      struct vma* v = 0;
+      for (int i = 0; i < NVMA; i++) {
+        if (p->vmas[i].valid && stval >= p->vmas[i].start && stval < p->vmas[i].end) {
+          v = &p->vmas[i];
+          break;
+        }
+      }
+
+      if (v == 0) {
+        // 地址不属于任何一个合法的 VMA，这是一个段错误 (Segmentation Fault)
+        printf("usertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, stval);
+        p->killed = 1;
+      }
+      else {
+        // 找到了 VMA，检查访问权限是否合法
+        if (
+          (scause == 12 && !(v->prot & PROT_EXEC)) ||    // 取指缺页，但 VMA 不可执行
+          (scause == 13 && !(v->prot & PROT_READ)) ||    // 读缺页，但 VMA 不可读
+          (scause == 15 && !(v->prot & PROT_WRITE))      // 写缺页，但 VMA 不可写
+        ) {
+          // 权限不匹配，这是保护错误 (Protection Fault)
+          printf("usertrap(): protection fault pid=%d %s, va=%p\n", p->pid, p->name, stval);
+          p->killed = 1;
+        }
+        else {
+          // 权限检查通过，开始处理缺页，为该地址分配物理内存并建立映射
+
+          // 计算缺页地址所在的页的起始地址
+          uint64 va_page_start = PGROUNDDOWN(stval);
+
+          // 分配一页物理内存
+          char* mem = kalloc();
+          if (mem == 0) {
+            printf("usertrap(): out of memory\n");
+            p->killed = 1;
+          }
+          else {
+            // 将新分配的页清零
+            memset(mem, 0, PGSIZE);
+
+            // 如果是文件映射，从文件中读取相应内容到新分配的页
+            if (v->vm_file) {
+              elock(v->vm_file->ep);
+              // 计算文件内的偏移量：VMA 文件偏移 + 页在 VMA 内的偏移
+              uint64 file_offset = v->offset + (va_page_start - v->start);
+              // 从文件读取一页内容到内核地址 mem
+              eread(v->vm_file->ep, 0, (uint64)mem, file_offset, PGSIZE);
+              eunlock(v->vm_file->ep);
+            }
+
+            // 根据 VMA 的保护权限，设置页表项 PTE 的标志位
+            int pte_flags = PTE_U; // PTE_U 表示用户态可访问
+            if (v->prot & PROT_READ) pte_flags |= PTE_R;
+            if (v->prot & PROT_WRITE) pte_flags |= PTE_W;
+            if (v->prot & PROT_EXEC) pte_flags |= PTE_X;
+
+            // 调用 mappages 将物理页 mem 映射到用户虚拟地址 va_page_start
+            if (mappages(p->pagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags) != 0) {
+              // 映射失败，释放刚分配的页
+              kfree(mem); 
+              printf("usertrap(): mappages failed\n");
+              p->killed = 1;
+            }
+            // 同样需要映射到内核页表
+            if (mappages(p->kpagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags & ~PTE_U) != 0) {
+              kfree(mem);
+              vmunmap(p->pagetable, va_page_start, 1, 1);
+              p->killed = 1;
+            }
+          }
+        }
+      }
+    }
+    else {
+      // 如果不是缺页异常，按原逻辑处理未知异常
+      printf("\nusertrap(): unexpected scause %p pid=%d %s\n", r_scause(), p->pid, p->name);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   }
 
   if(p->killed)

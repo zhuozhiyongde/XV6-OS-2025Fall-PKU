@@ -126,4 +126,8 @@
 
 #define MAXUVA                  RUSTSBI_BASE
 
+// mmap 的最高地址，和 TRAPFRAME 之间间隔的地址用于用户栈
+// mmap 永远向下扩展
+#define MMAPBASE                0x60000000L
+
 #endif

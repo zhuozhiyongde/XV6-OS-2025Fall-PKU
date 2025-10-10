@@ -381,3 +381,147 @@ uint64 sys_sched_yield(void) {
   return 0;
 }
 
+/**
+ * @brief 实现 mmap 系统调用，将文件映射到进程的地址空间。
+ * @param addr 映射的起始地址，只支持 0，即系统自动选择地址
+ * @param len 映射的长度，会向上取整到 PGSIZE 的整倍数
+ * @param prot 映射的权限
+ * @param flags 映射的标志，只支持 MAP_SHARED 和 MAP_ANONYMOUS，不支持 MAP_FIXED
+ * @param fd 文件描述符
+ * @param offset 文件偏移量，必须是 PGSIZE 的整倍数
+ * @return 映射的起始地址，-1 表示失败
+ */
+uint64 sys_mmap(void) {
+  uint64 addr, len;
+  int prot, flags, fd, offset;
+  struct proc* p = myproc();
+
+  if (
+    argaddr(0, &addr) < 0 ||
+    argaddr(1, &len) < 0 ||
+    argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 ||
+    argint(4, &fd) < 0 ||
+    argint(5, &offset) < 0
+  )
+    return -1;
+
+  if (len == 0) {
+    return -1;
+  }
+
+  // 偏移量必须是 PGSIZE 的整倍数
+  if (offset % PGSIZE != 0) {
+    return -1;
+  }
+
+  // 不支持用户指定地址或者固定地址映射
+  if (addr != 0 || (flags & MAP_FIXED)) {
+    return -1;
+  }
+
+  // 向上取整到 PGSIZE 的整倍数
+  len = PGROUNDUP(len);
+
+  // 寻找一个可用的 VMA 位置
+  struct vma* v = NULL;
+  for (int i = 0; i < NVMA; i++) {
+    if (!p->vmas[i].valid) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+  // 没有可用的 VMA 位置，返回失败
+  if (v == NULL) {
+    return -1;
+  }
+
+  uint64 va = mmap_find_addr(p, len);
+  // 虚拟空间地址不足，返回失败
+  if (va == 0) {
+    return -1;
+  }
+
+  struct file* f = NULL;
+
+  // 如果不是匿名映射，则需要获取文件描述符对应的文件
+  if (!(flags & MAP_ANONYMOUS)) {
+    // 检查是否为合法的文件描述符
+    if (fd < 0 || fd >= NOFILE || (f = p->ofile[fd]) == NULL) {
+      return -1;
+    }
+  }
+
+  v->start = va;
+  v->end = va + len;
+  v->prot = prot;
+  v->flags = flags;
+  v->offset = offset;
+  // 如果是文件映射，则需要增加文件的引用计数，并保存文件指针
+  if (f) {
+    v->vm_file = filedup(f);
+  }
+  else {
+    v->vm_file = NULL;
+  }
+  v->valid = 1;
+
+  return va;
+}
+
+/**
+ * @brief 实现 munmap 系统调用，取消映射进程的地址空间。
+ * @param addr 映射的起始地址
+ * @param len 映射的长度，会向上取整到 PGSIZE 的整倍数
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_munmap(void) {
+  uint64 addr;
+  int len;
+  struct proc* p = myproc();
+
+  if (argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+
+  // 地址和长度都需要页对齐。
+  if (addr % PGSIZE != 0) {
+    return -1;
+  }
+  len = PGROUNDUP(len);
+  if (len == 0) {
+    return 0; // unmap 长度为0是无操作，直接成功。
+  }
+
+  // 遍历查找要 unmap 的 VMA。
+  // 这个实现简化为：必须完整地 unmap 一个或多个已存在的 VMA。
+  // 不支持部分 unmap（那会使一个 VMA 分裂成两个）。
+  for (int i = 0; i < NVMA; i++) {
+    struct vma* v = &p->vmas[i];
+    // 检查地址和长度是否精确匹配一个 VMA。
+    if (v->valid && v->start == addr && (v->end - v->start) == len) {
+
+      // 写回
+      vma_writeback(p, v);
+
+      // 决定是否释放物理页。
+      int do_free = (v->flags & MAP_SHARED) ? 0 : 1;
+
+      // 调用 vmunmap 清理页表和物理内存。
+      vmunmap(p->pagetable, addr, len / PGSIZE, do_free);
+
+      // 释放对文件的引用。
+      if (v->vm_file) {
+        fileclose(v->vm_file);
+        v->vm_file = NULL;
+      }
+
+      // 将 VMA 标记为无效。
+      v->valid = 0;
+
+      return 0; // 成功。
+    }
+  }
+
+  return -1; // 没有找到匹配的 VMA。
+}
