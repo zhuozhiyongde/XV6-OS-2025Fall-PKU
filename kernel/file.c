@@ -99,11 +99,13 @@ int
 filestat(struct file *f, uint64 addr)
 {
   // struct proc *p = myproc();
-  struct stat st;
+  // 这行修改为使用 kstat 结构体
+  struct kstat st;
   
   if(f->type == FD_ENTRY){
     elock(f->ep);
-    estat(f->ep, &st);
+    // 这行修改为使用 ekstat 函数
+    ekstat(f->ep, &st);
     eunlock(f->ep);
     // if(copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0)
     if(copyout2(addr, (char *)&st, sizeof(st)) < 0)

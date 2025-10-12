@@ -710,6 +710,27 @@ void estat(struct dirent *de, struct stat *st)
 }
 
 /**
+ * @brief 将 dirent 信息填充到 kstat 结构体中
+ * @param de 源 dirent
+ * @param st 目标 kstat 结构体指针
+ * @note 这是 fstat 的核心辅助函数，用于对齐 Linux 的 stat 结构。
+ */
+void ekstat(struct dirent* de, struct kstat* st)
+{
+    memset(st, 0, sizeof(*st));
+    st->st_dev = de->dev;
+    st->st_ino = 0;
+
+    st->st_mode = (de->attribute & ATTR_DIRECTORY) ? DT_DIR : DT_REG;
+
+    st->st_nlink = 1;
+    st->st_rdev = 0;
+    st->st_size = de->file_size;
+    st->st_blksize = 4096;
+    st->st_blocks = (st->st_size + 511) / 512;
+}
+
+/**
  * Read filename from directory entry.
  * @param   buffer      pointer to the array that stores the name
  * @param   raw_entry   pointer to the entry in a sector buffer
@@ -932,4 +953,34 @@ struct dirent *ename(char *path)
 struct dirent *enameparent(char *path, char *name)
 {
     return lookup_path(path, 1, name);
+}
+
+extern struct mount mounts[NMOUNT];
+
+/**
+ * @brief 检查一个 dirent 是否是挂载点
+ * @param de 要检查的 dirent
+ * @return 如果是挂载点返回 1，否则返回 0
+ */
+int is_mounted(const struct dirent* de) {
+    for (int i = 0; i < NMOUNT; i++) {
+        if (mounts[i].used && mounts[i].de == de) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief 根据路径查找挂载点
+ * @param path 要查找的路径
+ * @return 如果找到，返回 mount 数组的索引，否则返回 -1
+ */
+int find_mount(const char* path) {
+    for (int i = 0; i < NMOUNT; i++) {
+        if (mounts[i].used && strncmp(mounts[i].path, path, FAT32_MAX_PATH) == 0) {
+            return i;
+        }
+    }
+    return -1;
 }

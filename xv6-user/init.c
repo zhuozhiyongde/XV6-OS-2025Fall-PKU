@@ -32,6 +32,19 @@ char* tests[] = {
   "yield",
   "gettimeofday",
   "sleep",
+  // part 7
+  "dup",
+  "dup2",
+  "pipe",
+  "close",
+  "getdents",
+  "read",
+  "mkdir_",
+  "chdir",
+  "unlink",
+  "mount",
+  "umount",
+  "fstat",
 };
 
 int counts = sizeof(tests) / sizeof((tests)[0]);

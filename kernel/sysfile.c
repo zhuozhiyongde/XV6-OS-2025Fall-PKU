@@ -22,6 +22,8 @@
 #include "include/vm.h"
 #include "include/fcntl.h"
 
+struct mount mounts[NMOUNT];
+
 /**
  * @brief 递归地获取一个目录条目的绝对路径。
  * @param de        目标目录条目。
@@ -164,6 +166,42 @@ sys_dup(void)
     return -1;
   filedup(f);
   return fd;
+}
+
+/**
+ * @brief 实现 dup3 系统调用，复制文件描述符
+ * @param old_fd 被复制的文件描述符
+ * @param new_fd 指定的新的文件描述符
+ * @return 成功则返回新的文件描述符 new_fd，失败返回 -1
+ * @note dup3 与 dup 的主要区别在于可以指定 new_fd。如果 new_fd 已经被占用，会先关闭它。
+ */
+uint64
+sys_dup3(void)
+{
+  struct file* f;
+  int old_fd, new_fd;
+
+  if (argfd(0, &old_fd, &f) < 0 || argint(1, &new_fd) < 0) {
+    return -1;
+  }
+
+  if (new_fd < 0 || new_fd > NOFILE) {
+    return -1;
+  }
+
+  if (new_fd == old_fd) {
+    return -1;
+  }
+
+  struct proc* p = myproc();
+
+  if (p->ofile[new_fd] != NULL) {
+    fileclose(p->ofile[new_fd]);
+  }
+
+  p->ofile[new_fd] = filedup(f);
+
+  return new_fd;
 }
 
 uint64
@@ -403,6 +441,50 @@ sys_mkdir(void)
   eput(ep);
   return 0;
 }
+
+/**
+ * @brief 实现 mkdirat 系统调用，在指定位置创建目录
+ * @param dirfd 目录文件描述符
+ * @param path 目录路径
+ * @param mode 创建模式（本次实验中未使用）
+ * @return 成功返回 0，失败返回 -1
+ * @note 核心是复用 get_path 将路径转换为绝对路径。
+ */
+uint64
+sys_mkdirat(void) {
+  char path[FAT32_MAX_PATH];
+  int dirfd, mode;
+  struct dirent* ep;
+
+  if (
+    argint(0, &dirfd) < 0 ||
+    argstr(1, path, FAT32_MAX_PATH) < 0 ||
+    argint(2, &mode) < 0) {
+    return -1;
+  }
+
+  if (strlen(path) == 0) {
+    return -1;
+  }
+
+  // 将路径转换为绝对路径
+  if (get_path(path, dirfd) < 0) {
+    return -1;
+  }
+
+  // 调用底层 create 函数创建目录
+  ep = create(path, T_DIR, 0);
+  if (ep == NULL) {
+    return -1;
+  }
+
+  // 释放资源并返回
+  eunlock(ep);
+  eput(ep);
+  return 0;
+}
+
+
 
 uint64
 sys_chdir(void)
@@ -691,4 +773,289 @@ fail:
   if (src)
     eput(src);
   return -1;
+}
+
+/**
+ * @brief 实现 getdents 系统调用，读取目录项
+ * @param fd 目录的文件描述符
+ * @param addr 用户空间缓冲区的地址，用于存放读取结果
+ * @param len 缓冲区的长度
+ * @return 成功则返回读取的字节数，读到目录末尾返回 0，失败返回 -1
+ * @note getdents 是 ls 等命令的底层实现。
+ */
+uint64 sys_getdents(void) {
+  int fd, len;
+  uint64 addr;
+  struct file* f;
+  int nread = 0;
+  int reclen = (int)sizeof(struct dirent64);
+
+  if (argfd(0, &fd, &f) < 0 || argaddr(1, &addr) < 0 || argint(2, &len) < 0) {
+    return -1;
+  }
+
+  // 缓冲区太小，至少要能装下一个目录项
+  if (len < reclen) {
+    return 0;
+  }
+
+  if (fd < 0 || fd >= NOFILE) {
+    return -1;
+  }
+
+  // 必须是目录且可读
+  if (f->readable == 0) {
+    return -1;
+  }
+
+  if (f->ep == 0 || !(f->ep->attribute & ATTR_DIRECTORY)) {
+    return -1;
+  }
+
+  // 循环读取，直到缓冲区满或目录读完
+  while (nread + reclen <= len) {
+    struct dirent de;
+    int count = 0;
+    int ret;
+
+    elock(f->ep);
+    // enext 会找到下一个有效的目录项，并填充到 de 中
+    // 它会跳过空目录项和 LNE，直接返回一个完整的 SNE
+    while ((ret = enext(f->ep, &de, f->off, &count)) == 0) {
+      f->off += count * 32;
+    }
+    eunlock(f->ep);
+
+    if (ret == -1) { // 读到目录末尾
+      return nread; // 退出循环，返回已经读取的字节数
+    }
+
+    // 将内核的 dirent 格式转换为用户态的 dirent64 格式
+    struct dirent64 out;
+    out.d_ino = 0; // FAT32 没有 inode number 的概念
+    out.d_off = f->off;
+    out.d_reclen = sizeof(struct dirent64);
+    if (de.attribute & ATTR_DIRECTORY) {
+      out.d_type = DT_DIR;
+    }
+    else {
+      out.d_type = DT_REG;
+    }
+    safestrcpy(out.d_name, de.filename, FAT32_MAX_FILENAME + 1);
+
+    // 拷贝到用户空间
+    if (copyout2(addr, (char*)&out, sizeof(out)) < 0) {
+      return -1;
+    }
+
+    // 更新指针和计数器
+    addr += sizeof(out);
+    nread += sizeof(out);
+    f->off += count * 32;
+  }
+
+  return nread;
+}
+
+/**
+ * @brief 实现 unlinkat 系统调用，删除文件或目录
+ * @param dirfd 目录文件描述符
+ * @param path 文件或目录的路径
+ * @param flags 标志位，AT_REMOVEDIR 用于删除目录
+ * @return 成功返回 0，失败返回 -1
+ * @note 需要根据 flags 和文件类型（文件/目录）进行精细的判断。
+ */
+uint64 sys_unlinkat(void) {
+  char path[FAT32_MAX_PATH];
+  int dirfd, flags;
+  struct dirent* ep;
+
+  if (
+    argint(0, &dirfd) < 0 ||
+    argstr(1, path, FAT32_MAX_PATH) < 0 ||
+    argint(2, &flags) < 0
+  ) {
+    return -1;
+  }
+
+  if (strlen(path) == 0) {
+    return -1;
+  }
+
+  if (get_path(path, dirfd) < 0) {
+    return -1;
+  }
+
+  char* basename = path;
+  char* p = path;
+
+  // 禁止删除 "." 和 ".."
+  // 找到最后一个 '/'
+  while (*p) {
+    if (*p == '/') {
+      basename = p + 1;
+    }
+    p++;
+  }
+  // 现在 basename 指向路径的最后一部分
+  if (strncmp(basename, ".", 1) == 0 || strncmp(basename, "..", 2) == 0) {
+    return -1;
+  }
+
+  // 获取路径对应的 dirent
+  ep = ename(path);
+  if (ep == NULL) {
+    return -1;
+  }
+  elock(ep);
+  if (ep->attribute & ATTR_DIRECTORY) {
+    eremove(ep);
+  }
+
+  // 不允许删除挂载点
+  if (is_mounted(ep)) {
+    eunlock(ep);
+    eput(ep);
+    return -1;
+  }
+
+  // 根据文件类型和 flags 进行判断
+  if (ep->attribute & ATTR_DIRECTORY) {
+    // 意图删除目录，但 flags 不对
+    if (!(flags & AT_REMOVEDIR)) {
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+    // 目录非空
+    if (!isdirempty(ep)) {
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+  }
+  else {
+    // 意图删除文件，但 flags 不对
+    if (flags & AT_REMOVEDIR) {
+      eunlock(ep);
+      eput(ep);
+      return -1;
+    }
+  }
+
+  // 执行删除
+  elock(ep->parent);
+  eremove(ep);
+  eunlock(ep->parent);
+  eunlock(ep);
+  eput(ep);
+  return 0;
+}
+
+/**
+ * @brief 实现 mount 系统调用（伪实现）
+ * @param src 源设备（未使用）
+ * @param dst 挂载点路径
+ * @param fstype 文件系统类型（未使用）
+ * @param flags 标志（未使用）
+ * @param data 数据（未使用）
+ * @return 成功返回 0，失败返回 -1
+ * @note 仅记录挂载点信息，不执行实际挂载操作。
+ */
+uint64 sys_mount(void) {
+  char src[FAT32_MAX_PATH];
+  char dst[FAT32_MAX_PATH];
+  char fstype[32];
+  int flags;
+  uint64 data;
+
+  if (
+    argstr(0, src, FAT32_MAX_PATH) < 0 ||
+    argstr(1, dst, FAT32_MAX_PATH) < 0 ||
+    argstr(2, fstype, sizeof(fstype)) < 0 ||
+    argint(3, &flags) < 0 ||
+    argaddr(4, &data) < 0
+  ) {
+    return -1;
+  }
+
+  if (get_path(dst, AT_FDCWD) < 0) {
+    return -1;
+  }
+
+  struct dirent* dst_ep = ename(dst);
+  if (dst_ep == NULL) {
+    return -1;
+  }
+
+  elock(dst_ep);
+  if (!(dst_ep->attribute & ATTR_DIRECTORY)) {
+    eunlock(dst_ep);
+    eput(dst_ep);
+    return -1;
+  }
+
+  // 检查是否是挂载点，实际上没用，可以删掉
+  if (is_mounted(dst_ep) || find_mount(dst) >= 0) {
+    eunlock(dst_ep);
+    eput(dst_ep);
+    return -1;
+  }
+
+  int idx = -1;
+  for (int i = 0; i < NMOUNT; i++) {
+    if (!mounts[i].used) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx == -1) {
+    eunlock(dst_ep);
+    eput(dst_ep);
+    return -1;
+  }
+  mounts[idx].de = edup(dst_ep);
+  mounts[idx].used = 1;
+  safestrcpy(mounts[idx].path, dst, FAT32_MAX_PATH);
+  eunlock(dst_ep);
+  eput(dst_ep);
+  return 0;
+}
+
+/**
+ * @brief 实现 umount 系统调用（伪实现）
+ * @param path 挂载点路径
+ * @param flags 标志（未使用）
+ * @return 成功返回 0，失败返回 -1
+ * @note 仅清除挂载点信息，不执行实际卸载操作。
+ */
+uint64 sys_umount(void) {
+  char path[FAT32_MAX_PATH];
+  int flags;
+
+  if (
+    argstr(0, path, FAT32_MAX_PATH) < 0 ||
+    argint(1, &flags) < 0
+  ) {
+    return -1;
+  }
+
+  if (get_path(path, AT_FDCWD) < 0) {
+    return -1;
+  }
+
+  int idx = find_mount(path);
+  if (idx < 0) {
+    return -1;
+  }
+
+  if (mounts[idx].de) {
+    eput(mounts[idx].de);
+  }
+
+  mounts[idx].de = NULL;
+  safestrcpy(mounts[idx].path, "", FAT32_MAX_PATH);
+  mounts[idx].used = 0;
+
+  return 0;
 }

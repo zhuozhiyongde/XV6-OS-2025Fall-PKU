@@ -13,6 +13,7 @@
 #define SYS_fstat       80   // 获取文件状态
 #define SYS_pipe        59   // 创建管道
 #define SYS_dup         23   // 复制文件描述符
+#define SYS_dup3        24   // 复制文件描述符，支持重定向
 #define SYS_mkdir        7   // 创建目录
 #define SYS_mkdirat     34   // 在指定目录下创建目录
 #define SYS_chdir       49   // 改变当前工作目录
@@ -22,6 +23,9 @@
 #define SYS_remove      117  // 删除文件或目录
 #define SYS_unlinkat    35   // 在指定目录下删除文件
 #define SYS_dev         21   // 设备文件操作
+#define SYS_getdents    61   // 读取目录项
+#define SYS_mount       40   // 挂载文件系统
+#define SYS_umount      39   // 卸载文件系统
 
 
 // Process management related (进程管理相关)
