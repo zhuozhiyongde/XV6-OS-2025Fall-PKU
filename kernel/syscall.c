@@ -138,9 +138,18 @@ extern uint64 sys_unlinkat(void);
 extern uint64 sys_mount(void);
 extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
+
+#ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
+#endif
+#ifdef SCHEDULER_PRIORITY
 extern uint64 sys_set_priority(void);
 extern uint64 sys_get_priority(void);
+#endif
+#ifdef SCHEDULER_MLFQ
+extern uint64 sys_set_priority(void);
+extern uint64 sys_get_priority(void);
+#endif
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
@@ -190,9 +199,17 @@ static uint64 (*syscalls[])(void) = {
   [SYS_unlinkat]    sys_unlinkat,
   [SYS_mount]       sys_mount,
   [SYS_umount]      sys_umount,
+  #ifdef SCHEDULER_RR
   [SYS_set_timeslice] sys_set_timeslice,
+  #endif
+  #ifdef SCHEDULER_PRIORITY
   [SYS_set_priority]  sys_set_priority,
   [SYS_get_priority]  sys_get_priority,
+  #endif
+  #ifdef SCHEDULER_MLFQ
+  [SYS_set_priority]  sys_set_priority,
+  [SYS_get_priority]  sys_get_priority,
+  #endif
 };
 
 static char *sysnames[] = {
@@ -243,9 +260,17 @@ static char *sysnames[] = {
   [SYS_unlinkat]    "unlinkat",
   [SYS_mount]       "mount",
   [SYS_umount]      "umount",
+  #ifdef SCHEDULER_RR
   [SYS_set_timeslice] "set_timeslice",
+  #endif
+  #ifdef SCHEDULER_PRIORITY
   [SYS_set_priority] "set_priority",
   [SYS_get_priority] "get_priority",
+  #endif
+  #ifdef SCHEDULER_MLFQ
+  [SYS_set_priority] "set_priority",
+  [SYS_get_priority] "get_priority",
+  #endif
 };
 
 void

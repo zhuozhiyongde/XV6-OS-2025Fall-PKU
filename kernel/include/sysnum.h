@@ -43,9 +43,9 @@
 #define SYS_nanosleep  101   // 使进程休眠（纳秒）
 #define SYS_sched_yield 124  // 主动让出CPU
 #define SYS_times      153   // 获取进程的执行时间
-#define SYS_set_timeslice 400 // 设置当前进程的时间片
-#define SYS_set_priority 401  // 设置当前进程的优先级
-#define SYS_get_priority 402  // 获取当前进程的优先级
+#define SYS_set_timeslice 400 // RR 算法：设置当前进程的时间片
+#define SYS_set_priority 401  // PRIORITY / MLFQ 算法：设置当前进程的优先级
+#define SYS_get_priority 402  // PRIORITY / MLFQ 算法：获取当前进程的优先级
 
 
 // Memory management related (内存管理相关)

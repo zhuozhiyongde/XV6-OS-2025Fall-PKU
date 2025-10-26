@@ -18,6 +18,9 @@
 #ifdef SCHEDULER_RR
 #define DEFAULT_TIMESLICE 1
 #endif
+#ifdef SCHEDULER_PRIORITY
+#define DEFAULT_PRIORITY 20
+#endif
 
 struct cpu cpus[NCPU];
 
@@ -146,9 +149,13 @@ found:
   p->pid = allocpid();
 
   #ifdef SCHEDULER_RR
-  // RR: 初始化时间片相关字段
+  // RR 算法: 初始化时间片、剩余时间片
   p->timeslice = DEFAULT_TIMESLICE;
   p->slice_remaining = DEFAULT_TIMESLICE;
+  #endif
+  #ifdef SCHEDULER_PRIORITY
+  // 优先级调度算法：初始化优先级
+  p->priority = DEFAULT_PRIORITY;
   #endif
   
   // Allocate a trapframe page.
@@ -210,6 +217,9 @@ freeproc(struct proc *p)
   #ifdef SCHEDULER_RR
   p->timeslice = DEFAULT_TIMESLICE; // 重置时间片为默认值以供下次复用
   p->slice_remaining = 0; // 重置剩余时间片以避免旧值影响
+  #endif
+  #ifdef SCHEDULER_PRIORITY
+  p->priority = DEFAULT_PRIORITY; // 恢复默认优先级便于复用
   #endif
 }
 
@@ -383,6 +393,10 @@ fork(void)
   np->timeslice = p->timeslice;
   np->slice_remaining = p->timeslice;
   #endif
+  #ifdef SCHEDULER_PRIORITY
+  // 子进程继承父进程的优先级
+  np->priority = p->priority;
+  #endif
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -457,6 +471,10 @@ clone(void)
   // 克隆时沿用父进程的时间片配置
   np->timeslice = p->timeslice;
   np->slice_remaining = p->timeslice;
+  #endif
+  #ifdef SCHEDULER_PRIORITY
+  // clone 子进程沿用父进程优先级
+  np->priority = p->priority;
   #endif
 
   // copy saved user registers.
@@ -693,6 +711,63 @@ scheduler(void)
   struct cpu *c = mycpu();
   extern pagetable_t kernel_pagetable;
 
+  #ifdef SCHEDULER_PRIORITY
+  c->proc = 0;
+  for(;;){
+    // Avoid deadlock by ensuring that devices can interrupt.
+    intr_on();
+    
+    int found = 0;
+    struct proc *selected = NULL;
+    // SCHEDULER_PRIORITY：遍历整个进程表比较优先级，找到优先级最高（Priority最小）的进程
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state != RUNNABLE) {
+        release(&p->lock); // 非 RUNNABLE 直接释放锁
+        continue;
+      }
+      if (selected == NULL
+        || p->priority < selected->priority
+        || (p->priority == selected->priority && p->pid < selected->pid)) {
+        if (selected != NULL) {
+          release(&selected->lock);
+        }
+        selected = p;
+        continue;
+      }
+      // 非候选者立即释放锁
+      release(&p->lock);
+    }
+    p = selected;
+
+    if (p != NULL) {
+      if (p->state == RUNNABLE) {
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        // printf("[scheduler]found runnable proc with pid: %d\n", p->pid);
+        p->state = RUNNING;
+        c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+        swtch(&c->context, &p->context);
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+
+        found = 1;
+      }
+      release(&p->lock);
+    }
+    if (found == 0) {
+      intr_on();
+      asm volatile("wfi");
+    }
+  }
+
+  #else
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
@@ -733,6 +808,7 @@ scheduler(void)
       asm volatile("wfi");
     }
   }
+  #endif
 }
 
 // Switch to scheduler.  Must hold only p->lock

@@ -71,6 +71,10 @@ struct proc {
   int timeslice;                // 进程设定的基础时间片长度
   int slice_remaining;          // 当前调度周期内剩余的时间片
   #endif
+  #ifdef SCHEDULER_PRIORITY
+  // 优先级调度所需的 PCB 字段
+  int priority;                 // 数值越小代表优先级越高
+  #endif
 
   // vma 相关
   struct vma vmas[NVMA];

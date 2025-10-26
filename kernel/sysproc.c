@@ -560,13 +560,32 @@ uint64 sys_set_priority(void) {
   if (argint(0, &priority) < 0) {
     return -1;
   }
+  #ifdef SCHEDULER_PRIORITY // SCHEDULER_PRIORITY：仅在启用优先级调度时真正设置
+  if (priority < 0) { // SCHEDULER_PRIORITY：不允许负数优先级避免排序失效
+    return -1; // SCHEDULER_PRIORITY：返回参数非法
+  }
+  struct proc* p = myproc(); // SCHEDULER_PRIORITY：获取当前进程指针
+  acquire(&p->lock); // SCHEDULER_PRIORITY：更新优先级前加锁
+  p->priority = priority; // SCHEDULER_PRIORITY：写入新的优先级
+  release(&p->lock); // SCHEDULER_PRIORITY：更新后解锁
+  #else
+  (void)priority; // SCHEDULER_PRIORITY：未启用时避免未使用警告
+  #endif
   return 0;
 }
 
 /**
- * @brief TODO：优先级调度算法 / MLFQ 算法获取当前进程的优先级
- * @return 当前进程的优先级
+ * @brief 优先级 / MLFQ 算法所需内核函数，实现 get_priority 系统调用，获取当前进程的优先级。
+ * @return 当前进程的优先级（占位实现固定返回0）
  */
 uint64 sys_get_priority(void) {
-  return 0;
+  #ifdef SCHEDULER_PRIORITY // SCHEDULER_PRIORITY：启用优先级调度时返回真实数值
+  struct proc* p = myproc(); // SCHEDULER_PRIORITY：获取当前进程
+  acquire(&p->lock); // SCHEDULER_PRIORITY：读取前加锁
+  int priority = p->priority; // SCHEDULER_PRIORITY：临时保存优先级
+  release(&p->lock); // SCHEDULER_PRIORITY：读取完毕解锁
+  return priority; // SCHEDULER_PRIORITY：返回优先级给用户态
+  #else
+  return 0; // SCHEDULER_PRIORITY：未启用时保持兼容返回 0
+  #endif
 }
