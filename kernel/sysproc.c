@@ -192,6 +192,11 @@ sys_sleep(void)
 {
   int n;
   uint ticks0;
+  
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ 算法需要记录每次 sleep 的休眠 tick 数累积，从而判断 I/O 密集还是 CPU 密集
+  int slept = 0;
+  #endif
 
   if(argint(0, &n) < 0)
     return -1;
@@ -199,12 +204,32 @@ sys_sleep(void)
   ticks0 = ticks;
   while(ticks - ticks0 < n){
     if(myproc()->killed){
+      
+      #ifdef SCHEDULER_MLFQ
+      slept = ticks - ticks0;
+      #endif
+      
       release(&tickslock);
+      
+      #ifdef SCHEDULER_MLFQ
+      if (slept > 0) {
+        mlfq_account_sleep(myproc(), slept);
+      }
+      #endif
+      
       return -1;
     }
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+  
+  #ifdef SCHEDULER_MLFQ
+  slept = ticks - ticks0;
+  if (slept > 0) {
+    mlfq_account_sleep(myproc(), slept);
+  }
+  #endif
+  
   return 0;
 }
 
@@ -550,8 +575,9 @@ uint64 sys_set_timeslice(void) {
 }
 #endif
 
+#if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
 /**
- * @brief TODO：优先级调度算法 / MLFQ 算法设置当前进程的优先级
+ * @brief 优先级 / MLFQ 调度算法所需内核函数，设置当前进程的优先级
  * @param priority 新的优先级
  * @return 0 表示系统调用成功返回，-1 表示参数解析失败
  */
@@ -560,17 +586,30 @@ uint64 sys_set_priority(void) {
   if (argint(0, &priority) < 0) {
     return -1;
   }
-  #ifdef SCHEDULER_PRIORITY // SCHEDULER_PRIORITY：仅在启用优先级调度时真正设置
-  if (priority < 0) { // SCHEDULER_PRIORITY：不允许负数优先级避免排序失效
-    return -1; // SCHEDULER_PRIORITY：返回参数非法
+  struct proc* p = myproc();
+
+  #ifdef SCHEDULER_PRIORITY
+  // 优先级调度：拒绝负值优先级
+  if (priority < 0) {
+    return -1;
   }
-  struct proc* p = myproc(); // SCHEDULER_PRIORITY：获取当前进程指针
-  acquire(&p->lock); // SCHEDULER_PRIORITY：更新优先级前加锁
-  p->priority = priority; // SCHEDULER_PRIORITY：写入新的优先级
-  release(&p->lock); // SCHEDULER_PRIORITY：更新后解锁
-  #else
-  (void)priority; // SCHEDULER_PRIORITY：未启用时避免未使用警告
+  acquire(&p->lock);
+  p->priority = priority;
+  release(&p->lock);
   #endif
+
+  #ifdef SCHEDULER_MLFQ
+  acquire(&p->lock);
+  // MLFQ：裁剪优先级到合法区间，并更新动态优先级、重置统计数据
+  p->priority = mlfq_clamp_priority(priority);
+  p->base_priority = p->priority;
+  p->ticks_used = 0;
+  p->eval_ticks = 0;
+  p->cpu_ticks = 0;
+  p->sleep_ticks = 0;
+  release(&p->lock);
+  #endif
+
   return 0;
 }
 
@@ -579,13 +618,10 @@ uint64 sys_set_priority(void) {
  * @return 当前进程的优先级（占位实现固定返回0）
  */
 uint64 sys_get_priority(void) {
-  #ifdef SCHEDULER_PRIORITY // SCHEDULER_PRIORITY：启用优先级调度时返回真实数值
-  struct proc* p = myproc(); // SCHEDULER_PRIORITY：获取当前进程
-  acquire(&p->lock); // SCHEDULER_PRIORITY：读取前加锁
-  int priority = p->priority; // SCHEDULER_PRIORITY：临时保存优先级
-  release(&p->lock); // SCHEDULER_PRIORITY：读取完毕解锁
-  return priority; // SCHEDULER_PRIORITY：返回优先级给用户态
-  #else
-  return 0; // SCHEDULER_PRIORITY：未启用时保持兼容返回 0
-  #endif
+  struct proc* p = myproc();
+  acquire(&p->lock);
+  int priority = p->priority;
+  release(&p->lock);
+  return priority;
 }
+#endif

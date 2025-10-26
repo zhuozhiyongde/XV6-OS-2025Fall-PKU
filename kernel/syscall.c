@@ -142,11 +142,7 @@ extern uint64 sys_dup2(void);
 #ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
 #endif
-#ifdef SCHEDULER_PRIORITY
-extern uint64 sys_set_priority(void);
-extern uint64 sys_get_priority(void);
-#endif
-#ifdef SCHEDULER_MLFQ
+#if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
 extern uint64 sys_set_priority(void);
 extern uint64 sys_get_priority(void);
 #endif
@@ -202,11 +198,7 @@ static uint64 (*syscalls[])(void) = {
   #ifdef SCHEDULER_RR
   [SYS_set_timeslice] sys_set_timeslice,
   #endif
-  #ifdef SCHEDULER_PRIORITY
-  [SYS_set_priority]  sys_set_priority,
-  [SYS_get_priority]  sys_get_priority,
-  #endif
-  #ifdef SCHEDULER_MLFQ
+  #if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
   [SYS_set_priority]  sys_set_priority,
   [SYS_get_priority]  sys_get_priority,
   #endif
@@ -263,11 +255,7 @@ static char *sysnames[] = {
   #ifdef SCHEDULER_RR
   [SYS_set_timeslice] "set_timeslice",
   #endif
-  #ifdef SCHEDULER_PRIORITY
-  [SYS_set_priority] "set_priority",
-  [SYS_get_priority] "get_priority",
-  #endif
-  #ifdef SCHEDULER_MLFQ
+  #if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
   [SYS_set_priority] "set_priority",
   [SYS_get_priority] "get_priority",
   #endif

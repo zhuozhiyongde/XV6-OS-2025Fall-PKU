@@ -67,8 +67,17 @@ CFLAGS += -D QEMU
 
 # Part 4: 选择调度器类型
 USER_CFLAGS = 
-SCHEDULER_TYPE ?= PRIORITY
+SCHEDULER_TYPE = 
 TEST_PROGRAM = 
+ENABLE_JUDGER =
+
+ifeq ($(ENABLE_JUDGER), 1)
+  CFLAGS += -DENABLE_JUDGER
+  USER_CFLAGS += -DENABLE_JUDGER
+  ifeq ($(SCHEDULER_TYPE),)
+    $(error SCHEDULER_TYPE is not defined, use make run_test SCHEDULER_TYPE=RR/PRIORITY/MLFQ)
+  endif
+endif
 
 ifeq ($(SCHEDULER_TYPE), RR)
   TEST_PROGRAM = test_proc_rr
@@ -272,10 +281,10 @@ all:
 # 助教提供的功能性测试平台所使用的编译命令
 run_test:
 	@$(MAKE) clean
-	@$(MAKE) dump
-	@$(MAKE) build
-	@$(MAKE) fs
-	@$(MAKE) run
+	@$(MAKE) dump ENABLE_JUDGER=1
+	@$(MAKE) build ENABLE_JUDGER=1
+	@$(MAKE) fs ENABLE_JUDGER=1
+	@$(MAKE) run ENABLE_JUDGER=1
 
 # 本地测试所使用的编译命令
 local:

@@ -15,13 +15,6 @@
 #include "include/vm.h"
 #include "include/syscall.h"
 
-#ifdef SCHEDULER_RR
-#define DEFAULT_TIMESLICE 1
-#endif
-#ifdef SCHEDULER_PRIORITY
-#define DEFAULT_PRIORITY 20
-#endif
-
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -34,7 +27,155 @@ struct spinlock pid_lock;
 extern void forkret(void);
 extern void swtch(struct context*, struct context*);
 static void wakeup1(struct proc *chan);
-static void freeproc(struct proc *p);
+static void freeproc(struct proc* p);
+
+#ifdef SCHEDULER_RR
+/**
+ * @brief RR 算法所需内核函数，处理时间片递减与抢占逻辑
+ * @return void
+ */
+void rr_on_timer_tick(void) {
+  struct proc* p = myproc();
+  // 无进程时无需处理
+  if (p == 0) {
+    return;
+  }
+  // 仅在进程实际运行时才计时
+  if (p->state != RUNNING) {
+    return;
+  }
+  // 仍有剩余时间片时递减
+  if (p->slice_remaining > 0) {
+    p->slice_remaining--;
+  }
+  // 时间片耗尽需让出 CPU
+  if (p->slice_remaining <= 0) {
+    yield();
+    return;
+  }
+}
+#endif
+
+#ifdef SCHEDULER_MLFQ
+/**
+ * @brief MLFQ：裁剪优先级到合法区间
+ * @param priority 优先级
+ * @return 裁剪后的优先级
+ */
+inline int mlfq_clamp_priority(int priority) {
+  return MIN(MLFQ_MAX_PRIORITY_LEVEL, MAX(MLFQ_MIN_PRIORITY_LEVEL, priority));
+}
+
+/**
+ * @brief MLFQ：根据优先级确定时间片，优先级越高（level 越小）时间片越短
+ * @param priority 优先级
+ * @return 时间片长度
+ */
+static inline int mlfq_timeslice_for_priority(int priority) {
+  // 优先级经过裁剪后参与判断
+  int level = mlfq_clamp_priority(priority);
+  if (level <= 2) {
+    return 1;
+  }
+  if (level <= 5) {
+    return 2;
+  }
+  if (level <= 8) {
+    return 3;
+  }
+  if (level <= 12) {
+    return 4;
+  }
+  return 5;
+}
+
+/**
+ * @brief MLFQ：清空评估窗口内统计数据
+ * @param p 进程指针
+ */
+static void mlfq_reset_window(struct proc* p) {
+  p->eval_ticks = 0;
+  p->cpu_ticks = 0;
+  p->sleep_ticks = 0;
+}
+
+/**
+ * @brief MLFQ：根据 CPU 与休眠占比尝试调整优先级
+ * @param p 进程指针
+ */
+static void mlfq_try_adjust_priority(struct proc* p) {
+  // 不足一个评估窗口无需调整
+  if (p->eval_ticks < MLFQ_EVAL_TICKS) {
+    return;
+  }
+  int cpu_ticks = p->cpu_ticks;
+  int sleep_ticks = p->sleep_ticks;
+  // CPU 占比高，执行降级
+  if (cpu_ticks > 0 && cpu_ticks >= sleep_ticks * MLFQ_CPU_DOM_RATIO) {
+    if (p->priority < MLFQ_MAX_PRIORITY_LEVEL) {
+      p->priority = mlfq_clamp_priority(p->priority + 1);
+    }
+  }
+  // 休眠占比高，执行升级
+  else if (sleep_ticks > 0 && sleep_ticks >= cpu_ticks * MLFQ_SLEEP_DOM_RATIO) {
+    if (p->priority > MLFQ_MIN_PRIORITY_LEVEL) {
+      p->priority = mlfq_clamp_priority(p->priority - 1);
+    }
+  }
+  mlfq_reset_window(p);
+}
+
+/**
+ * @brief MLFQ：记录 sys_sleep 调用带来的休眠时间
+ * @param p 进程指针
+ * @param sleep_ticks 休眠时间
+ * @return void
+ */
+void mlfq_account_sleep(struct proc* p, int sleep_ticks) {
+  if (p == 0 || sleep_ticks <= 0) {
+    return;
+  }
+  acquire(&p->lock);
+  p->sleep_ticks += sleep_ticks;
+  p->eval_ticks += sleep_ticks;
+  mlfq_try_adjust_priority(p);
+  release(&p->lock);
+}
+
+/**
+ * @brief MLFQ 算法所需内核函数，时间中断时更新调度信息
+ * @return void
+ */
+void mlfq_on_timer_tick(void) {
+  struct proc* p = myproc();
+  // 无进程时无需处理
+  if (p == 0) {
+    return;
+  }
+  // 仅对运行态进程计数
+  if (p->state != RUNNING) {
+    return;
+  }
+  int need_yield = 0;
+  acquire(&p->lock);
+  p->ticks_used++;
+  p->eval_ticks++;
+  p->cpu_ticks++;
+  // 尝试根据更新后的数据调整优先级
+  mlfq_try_adjust_priority(p);
+  // 根据最新优先级计算时间片
+  int slice = mlfq_timeslice_for_priority(p->priority);
+  // 时间片耗尽需切换
+  if (p->ticks_used >= slice) {
+    p->ticks_used = 0;
+    need_yield = 1;
+  }
+  release(&p->lock);
+  if (need_yield) {
+    yield();
+  }
+}
+#endif
 
 extern char trampoline[]; // trampoline.S
 
@@ -157,6 +298,15 @@ found:
   // 优先级调度算法：初始化优先级
   p->priority = DEFAULT_PRIORITY;
   #endif
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ：初始化优先级与窗口统计数据
+  p->priority = DEFAULT_PRIORITY;
+  p->base_priority = DEFAULT_PRIORITY;
+  p->ticks_used = 0;
+  p->eval_ticks = 0;
+  p->cpu_ticks = 0;
+  p->sleep_ticks = 0;
+  #endif
   
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == NULL){
@@ -214,12 +364,21 @@ freeproc(struct proc *p)
   p->xstate = 0;
   p->state = UNUSED;
 
+  // 重置调度相关字段
   #ifdef SCHEDULER_RR
-  p->timeslice = DEFAULT_TIMESLICE; // 重置时间片为默认值以供下次复用
-  p->slice_remaining = 0; // 重置剩余时间片以避免旧值影响
+  p->timeslice = DEFAULT_TIMESLICE;
+  p->slice_remaining = 0;
   #endif
   #ifdef SCHEDULER_PRIORITY
-  p->priority = DEFAULT_PRIORITY; // 恢复默认优先级便于复用
+  p->priority = DEFAULT_PRIORITY;
+  #endif
+  #ifdef SCHEDULER_MLFQ
+  p->priority = DEFAULT_PRIORITY;
+  p->base_priority = DEFAULT_PRIORITY;
+  p->ticks_used = 0;
+  p->eval_ticks = 0;
+  p->cpu_ticks = 0;
+  p->sleep_ticks = 0;
   #endif
 }
 
@@ -397,6 +556,15 @@ fork(void)
   // 子进程继承父进程的优先级
   np->priority = p->priority;
   #endif
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ：子进程继承父进程的动态和基础优先级，但是需要重置运行时统计数据
+  np->priority = p->priority;
+  np->base_priority = p->base_priority;
+  np->ticks_used = 0;
+  np->eval_ticks = 0;
+  np->cpu_ticks = 0;
+  np->sleep_ticks = 0;
+  #endif
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -475,6 +643,15 @@ clone(void)
   #ifdef SCHEDULER_PRIORITY
   // clone 子进程沿用父进程优先级
   np->priority = p->priority;
+  #endif
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ：子进程继承父进程的动态和基础优先级，但是需要重置运行时统计数据
+  np->priority = p->priority;
+  np->base_priority = p->base_priority;
+  np->ticks_used = 0;
+  np->eval_ticks = 0;
+  np->cpu_ticks = 0;
+  np->sleep_ticks = 0;
   #endif
 
   // copy saved user registers.
@@ -766,7 +943,60 @@ scheduler(void)
       asm volatile("wfi");
     }
   }
+  #elif defined(SCHEDULER_MLFQ)
+  c->proc = 0;
+  for(;;){
+    intr_on();
+    int found = 0;
+    struct proc *selected = NULL;
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state != RUNNABLE) {
+        release(&p->lock);
+        continue;
+      }
+      // MLFQ：优先按当前优先级、基础优先级、pid 依次比较，选择需要执行的进程
+      if (selected == NULL
+          || p->priority < selected->priority
+          || (p->priority == selected->priority && p->base_priority < selected->base_priority)
+          || (p->priority == selected->priority && p->base_priority == selected->base_priority && p->pid < selected->pid)) {
+        if (selected != NULL) {
+          release(&selected->lock);
+        }
+        selected = p;
+        continue;
+      }
+      // 非最佳候选立即释放锁
+      release(&p->lock);
+    }
+    p = selected;
 
+    if (p != NULL) {
+      if (p->state == RUNNABLE) {
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        // printf("[scheduler]found runnable proc with pid: %d\n", p->pid);
+        p->state = RUNNING;
+        c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+        swtch(&c->context, &p->context);
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+
+        found = 1;
+      }
+      release(&p->lock);
+    }
+    if (found == 0) {
+      intr_on();
+      asm volatile("wfi");
+    }
+  }
   #else
   c->proc = 0;
   for(;;){
@@ -845,6 +1075,10 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   p->state = RUNNABLE;
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ：主动让出 CPU 时清空时间片计数
+  p->ticks_used = 0;
+  #endif
   sched();
   release(&p->lock);
 }
@@ -894,6 +1128,10 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ：休眠时清空当前时间片进度
+  p->ticks_used = 0;
+  #endif
 
   sched();
 

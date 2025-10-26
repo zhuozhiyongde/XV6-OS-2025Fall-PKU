@@ -10,6 +10,23 @@
 #include "trap.h"
 #include "vm.h"
 
+#ifdef SCHEDULER_RR
+#define DEFAULT_TIMESLICE 1
+#endif
+#if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
+#define DEFAULT_PRIORITY 5 // 默认分配给新进程的优先级
+#endif
+#ifdef SCHEDULER_MLFQ 
+#define MLFQ_MIN_PRIORITY_LEVEL 1 // MLFQ：最高优先级对应的数值
+#define MLFQ_MAX_PRIORITY_LEVEL 20 // MLFQ：最低优先级对应的数值
+#define MLFQ_EVAL_TICKS 5 // MLFQ：统计窗口长度，单位为 tick
+#define MLFQ_CPU_DOM_RATIO 2 // MLFQ：CPU 压制阈值，CPU 使用超过休眠两倍视为 CPU 密集
+#define MLFQ_SLEEP_DOM_RATIO 2 // MLFQ：休眠压制阈值，休眠超过 CPU 两倍视为 I/O 密集
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
 // Saved registers for kernel context switches.
 struct context {
   uint64 ra;
@@ -71,9 +88,20 @@ struct proc {
   int timeslice;                // 进程设定的基础时间片长度
   int slice_remaining;          // 当前调度周期内剩余的时间片
   #endif
+
   #ifdef SCHEDULER_PRIORITY
   // 优先级调度所需的 PCB 字段
   int priority;                 // 数值越小代表优先级越高
+  #endif
+
+  #ifdef SCHEDULER_MLFQ
+  // MLFQ 算法所需的 PCB 字段
+  int priority;                 // 动态优先级，数值越小代表优先级越高
+  int ticks_used;               // 记录当前时间片已消耗的 tick 数
+  int eval_ticks;               // 当前统计窗口内累计 tick 数
+  int cpu_ticks;                // 最近窗口内的 CPU 使用 tick 数
+  int sleep_ticks;              // 最近窗口内的休眠 tick 数
+  int base_priority;            // 记录用户设置的基础优先级，用于同级队列的 FIFO 判定
   #endif
 
   // vma 相关
@@ -106,5 +134,15 @@ int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
 uint64          procnum(void);
 void            test_proc_init(int);
+
+#ifdef SCHEDULER_RR
+void            rr_on_timer_tick(void);
+#endif
+
+#ifdef SCHEDULER_MLFQ
+int             mlfq_clamp_priority(int priority);
+void            mlfq_on_timer_tick(void);
+void            mlfq_account_sleep(struct proc *p, int sleep_ticks);
+#endif
 
 #endif
