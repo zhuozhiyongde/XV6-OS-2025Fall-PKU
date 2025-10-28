@@ -99,6 +99,14 @@ all:
   @cp $(T)/kernel ./kernel-qemu
   @cp ./bootloader/SBI/sbi-qemu ./sbi-qemu
 
+# 助教提供的功能性测试平台所使用的编译命令
+run_test:
+  @$(MAKE) clean
+  @$(MAKE) dump ENABLE_JUDGER=1
+  @$(MAKE) build ENABLE_JUDGER=1
+  @$(MAKE) fs ENABLE_JUDGER=1
+  @$(MAKE) run ENABLE_JUDGER=1
+
 # 本地测试所使用的编译命令
 local:
   @$(MAKE) clean
@@ -117,3 +125,80 @@ alias qwe='docker run -ti --rm -v ./:/xv6 -w /xv6 --privileged=true docker.educg
 然后重载一下 Shell（删了重新创建，或者使用 `. ~/.bashrc` 或者 `. ~/.zshrc`）。
 
 这样，你每次就可以直接使用 `qwe` 进入 Docker 环境了。
+
+（详细操作见 [part0.md](./notes/part0.md)）
+
+## 📝 各部分简要说明
+
+### Part 0
+
+主要完成了 Docker 环境搭建、Make 工具配置、本地测试环境搭建、远程测试环境搭建，以及项目基础运行逻辑的梳理介绍。
+
+详细内容参见 [xv6-os-lab-part0 笔记](https://arthals.ink/blog/xv6-os-lab-part0)。
+
+### Part 1
+
+完成 `initcode.h` 的自动化生成，实现如下系统调用：
+
+-   `getcwd`
+-   `write`
+-   `getpid`
+-   `times`
+-   `uname`
+
+详细内容参见 [xv6-os-lab-part1 笔记](https://arthals.ink/blog/xv6-os-lab-part1)。
+
+### Part 2
+
+详细介绍了内核中基础文件系统与内存机制，并实现了如下系统调用：
+
+-   `open`
+-   `openat`
+-   `brk`
+-   `mmap`
+-   `munmap`
+
+详细内容参见 [xv6-os-lab-part2 笔记](https://arthals.ink/blog/xv6-os-lab-part2)。
+
+### Part 3
+
+详细介绍了时钟与进程管理相关机制，并实现了如下系统调用：
+
+-   `wait`
+-   `waitpid`
+-   `clone`
+-   `fork`
+-   `execve`
+-   `getppid`
+-   `exit`
+-   `yield`
+-   `gettimeofday`
+-   `sleep`
+
+详细内容参见 [xv6-os-lab-part3 笔记](https://arthals.ink/blog/xv6-os-lab-part3)。
+
+
+### Part 7
+
+详细介绍了 FAT32 文件系统相关机制，并实现了如下系统调用：
+
+- `dup`
+- `dup3`
+- `pipe`
+- `close`
+- `getdents`
+- `read`
+- `mkdirat`
+- `chdir`
+- `unlinkat`
+- `mount`
+- `umount2`
+- `fstat`
+
+详细内容参见 [xv6-os-lab-part7 笔记](https://arthals.ink/blog/xv6-os-lab-part7)。
+
+> 你也可以在 `notes/` 目录下查看完整的笔记源代码，但推荐在我的博客中查看以获得更好的阅读体验。
+
+## 📜 LICENSE
+
+MIT License
