@@ -21,6 +21,33 @@ extern char trampoline[], uservec[], userret[];
 // in kernelvec.S, calls kerneltrap().
 extern void kernelvec();
 
+#ifdef SCHEDULER_RR
+/**
+ * @brief RR 算法所需内核函数，处理时间片递减与抢占逻辑
+ * @return void
+ */
+static void rr_on_timer_tick(void) {
+  struct proc *p = myproc();
+  // 无进程时无需处理
+  if (p == 0) {
+    return;
+  }
+  // 仅在进程实际运行时才计时
+  if (p->state != RUNNING) {
+    return;
+  }
+  // 仍有剩余时间片时递减
+  if (p->slice_remaining > 0) {
+    p->slice_remaining--;
+  }
+  // 时间片耗尽需让出 CPU
+  if (p->slice_remaining <= 0) {
+    yield();
+    return;
+  }
+}
+#endif
+
 int devintr();
 
 // void
@@ -179,8 +206,15 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if (which_dev == 2) {
+    #ifdef SCHEDULER_RR
+    // RR 算法：进入时间中断后，处理时间片递减与抢占逻辑
+    rr_on_timer_tick();
+    #else
+    // 默认：直接让出 CPU
     yield();
+    #endif
+  }
 
   usertrapret();
 }
@@ -257,8 +291,16 @@ kerneltrap() {
   // printf("which_dev: %d\n", which_dev);
   
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2 && myproc() != 0 && myproc()->state == RUNNING) {
-    yield();
+  if (which_dev == 2) {
+    #ifdef SCHEDULER_RR
+    // RR 算法：进入时间中断后，处理时间片递减与抢占逻辑
+    rr_on_timer_tick();
+    #else
+    // 默认：直接让出 CPU
+    if (myproc() != 0 && myproc()->state == RUNNING) {
+      yield();
+    }
+    #endif
   }
   // the yield() may have caused some traps to occur,
   // so restore trap registers for use by kernelvec.S's sepc instruction.

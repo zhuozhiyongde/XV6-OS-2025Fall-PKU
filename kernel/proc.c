@@ -15,6 +15,9 @@
 #include "include/vm.h"
 #include "include/syscall.h"
 
+#ifdef SCHEDULER_RR
+#define DEFAULT_TIMESLICE 1
+#endif
 
 struct cpu cpus[NCPU];
 
@@ -142,6 +145,12 @@ allocproc(void)
 found:
   p->pid = allocpid();
 
+  #ifdef SCHEDULER_RR
+  // RR: 初始化时间片相关字段
+  p->timeslice = DEFAULT_TIMESLICE;
+  p->slice_remaining = DEFAULT_TIMESLICE;
+  #endif
+  
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == NULL){
     release(&p->lock);
@@ -197,6 +206,11 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  #ifdef SCHEDULER_RR
+  p->timeslice = DEFAULT_TIMESLICE; // 重置时间片为默认值以供下次复用
+  p->slice_remaining = 0; // 重置剩余时间片以避免旧值影响
+  #endif
 }
 
 // Create a user page table for a given process,
@@ -364,6 +378,12 @@ fork(void)
   // copy tracing mask from parent.
   np->tmask = p->tmask;
 
+  #ifdef SCHEDULER_RR
+  // fork 时沿用父进程的时间片配置
+  np->timeslice = p->timeslice;
+  np->slice_remaining = p->timeslice;
+  #endif
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -432,6 +452,12 @@ clone(void)
 
   // copy tracing mask from parent.
   np->tmask = p->tmask;
+
+  #ifdef SCHEDULER_RR
+  // 克隆时沿用父进程的时间片配置
+  np->timeslice = p->timeslice;
+  np->slice_remaining = p->timeslice;
+  #endif
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -675,7 +701,14 @@ scheduler(void)
     int found = 0;
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+      if (p->state == RUNNABLE) {
+        #ifdef SCHEDULER_RR
+        // RR: 确保时间片至少为 1
+        if (p->timeslice < 1) {
+          p->timeslice = 1;
+        }
+        p->slice_remaining = p->timeslice;
+        #endif
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
@@ -925,4 +958,3 @@ procnum(void)
 
   return num;
 }
-

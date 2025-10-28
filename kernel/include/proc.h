@@ -65,6 +65,12 @@ struct proc {
   struct dirent *cwd;          // Current directory
   char name[16];               // Process name (debugging)
   int tmask;                    // trace mask
+  
+  #ifdef SCHEDULER_RR
+  // RR 算法相关 PCB 数据结构扩展
+  int timeslice;                // 进程设定的基础时间片长度
+  int slice_remaining;          // 当前调度周期内剩余的时间片
+  #endif
 
   // vma 相关
   struct vma vmas[NVMA];
