@@ -138,6 +138,9 @@ extern uint64 sys_unlinkat(void);
 extern uint64 sys_mount(void);
 extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
+extern uint64 sys_set_timeslice(void);
+extern uint64 sys_set_priority(void);
+extern uint64 sys_get_priority(void);
 
 static uint64 (*syscalls[])(void) = {
   [SYS_fork]        sys_fork,
@@ -187,6 +190,9 @@ static uint64 (*syscalls[])(void) = {
   [SYS_unlinkat]    sys_unlinkat,
   [SYS_mount]       sys_mount,
   [SYS_umount]      sys_umount,
+  [SYS_set_timeslice] sys_set_timeslice,
+  [SYS_set_priority]  sys_set_priority,
+  [SYS_get_priority]  sys_get_priority,
 };
 
 static char *sysnames[] = {
@@ -237,6 +243,9 @@ static char *sysnames[] = {
   [SYS_unlinkat]    "unlinkat",
   [SYS_mount]       "mount",
   [SYS_umount]      "umount",
+  [SYS_set_timeslice] "set_timeslice",
+  [SYS_set_priority] "set_priority",
+  [SYS_get_priority] "get_priority",
 };
 
 void

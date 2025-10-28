@@ -43,3 +43,6 @@ entry("sysinfo");
 entry("rename");
 entry("shutdown");
 entry("dup2");
+entry("set_timeslice");
+entry("set_priority");
+entry("get_priority");

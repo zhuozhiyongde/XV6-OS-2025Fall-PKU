@@ -525,3 +525,37 @@ uint64 sys_munmap(void) {
 
   return -1; // 没有找到匹配的 VMA。
 }
+
+/**
+ * @brief TODO：RR 算法所需内核函数，设置当前进程的时间片
+ * @param timeslice 新的时间片长度
+ * @return 0 表示系统调用成功返回，-1 表示参数解析失败
+ */
+uint64 sys_set_timeslice(void) {
+  int timeslice;
+  if (argint(0, &timeslice) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * @brief TODO：优先级调度算法 / MLFQ 算法设置当前进程的优先级
+ * @param priority 新的优先级
+ * @return 0 表示系统调用成功返回，-1 表示参数解析失败
+ */
+uint64 sys_set_priority(void) {
+  int priority;
+  if (argint(0, &priority) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * @brief TODO：优先级调度算法 / MLFQ 算法获取当前进程的优先级
+ * @return 当前进程的优先级
+ */
+uint64 sys_get_priority(void) {
+  return 0;
+}

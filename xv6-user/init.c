@@ -9,42 +9,52 @@
 // char *argv[] = { "sh", 0 };
 char* argv[] = { 0 };
 char* tests[] = {
-  // part 1
-  "getcwd",
-  "write",
-  "getpid",
-  "times",
-  "uname",
-  // part 2
-  "brk",
-  "open",
-  "openat",
-  "mmap",
-  "munmap",
-  // part 3
-  "wait",
-  "waitpid",
-  "clone",
-  "fork",
-  "execve",
-  "getppid",
-  "exit",
-  "yield",
-  "gettimeofday",
-  "sleep",
-  // part 7
-  "dup",
-  "dup2",
-  "pipe",
-  "close",
-  "getdents",
-  "read",
-  "mkdir_",
-  "chdir",
-  "unlink",
-  "mount",
-  "umount",
-  "fstat",
+  // // part 1
+  // "getcwd",
+  // "write",
+  // "getpid",
+  // "times",
+  // "uname",
+  // // part 2
+  // "brk",
+  // "open",
+  // "openat",
+  // "mmap",
+  // "munmap",
+  // // part 3
+  // "wait",
+  // "waitpid",
+  // "clone",
+  // "fork",
+  // "execve",
+  // "getppid",
+  // "exit",
+  // "yield",
+  // "gettimeofday",
+  // "sleep",
+  // part 4
+  #ifdef SCHEDULER_RR
+    "test_proc_rr",
+  #endif
+  #ifdef SCHEDULER_PRIORITY
+    "test_proc_priority",
+  #endif
+  #ifdef SCHEDULER_MLFQ
+    "test_proc_mlfq",
+  #endif
+  // // part 7
+  // "dup",
+  // "dup2",
+  // "pipe",
+  // "close",
+  // "getdents",
+  // "read",
+  // "mkdir_",
+  // "chdir",
+  // "unlink",
+  // "mount",
+  // "umount",
+  // "fstat",
 };
 
 int counts = sizeof(tests) / sizeof((tests)[0]);

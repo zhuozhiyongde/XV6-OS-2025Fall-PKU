@@ -65,6 +65,31 @@ endif
 
 CFLAGS += -D QEMU
 
+# Part 4: 选择调度器类型
+USER_CFLAGS = 
+SCHEDULER_TYPE ?= RR
+TEST_PROGRAM = 
+
+ifeq ($(SCHEDULER_TYPE), RR)
+  TEST_PROGRAM = test_proc_rr
+  CFLAGS += -DSCHEDULER_RR
+  USER_CFLAGS += -DSCHEDULER_RR
+else ifeq ($(SCHEDULER_TYPE), PRIORITY)
+  TEST_PROGRAM = test_proc_priority
+  CFLAGS += -DSCHEDULER_PRIORITY
+  USER_CFLAGS += -DSCHEDULER_PRIORITY
+else ifeq ($(SCHEDULER_TYPE), MLFQ)
+  TEST_PROGRAM = test_proc_mlfq
+  CFLAGS += -DSCHEDULER_MLFQ
+  USER_CFLAGS += -DSCHEDULER_MLFQ
+endif
+
+TEST_PROGRAM := $(strip $(TEST_PROGRAM))
+CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
+USER_CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
+
+# END Part 4
+
 LDFLAGS = -z max-page-size=4096
 
 linker = ./linker/qemu.ld
@@ -167,11 +192,14 @@ UPROGS=\
 	# $U/_zombie\
 
 # Part4 调度器测试程序
-TESTCASES=\
-	$(TEST)/_judger\
-	$(TEST)/_test_proc_rr\
-	$(TEST)/_test_proc_priority\
-	$(TEST)/_test_proc_mlfq\
+TESTCASES := $(TEST)/_judger
+ifneq ($(TEST_PROGRAM),)
+  TESTCASES += $(TEST)/_$(TEST_PROGRAM)
+endif
+
+$(TEST)/%: $(TEST)/%.c $(ULIB)
+	$(CC) $(USER_CFLAGS) -o $@ $<
+	$(LD) $(LDFLAGS) -N -e main -Ttext 0 -o $@ $^
 
 userprogs: $(UPROGS)
 

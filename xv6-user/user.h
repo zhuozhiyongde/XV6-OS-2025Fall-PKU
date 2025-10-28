@@ -35,6 +35,9 @@ int trace(int mask);
 int sysinfo(struct sysinfo *);
 int rename(char* old, char* new);
 int shutdown(void);
+int set_timeslice(int);
+int set_priority(int);
+int get_priority(void);
 
 // ulib.c
 int stat(const char*, struct stat*);
