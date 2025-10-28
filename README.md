@@ -177,6 +177,24 @@ alias qwe='docker run -ti --rm -v ./:/xv6 -w /xv6 --privileged=true docker.educg
 
 详细内容参见 [xv6-os-lab-part3 笔记](https://arthals.ink/blog/xv6-os-lab-part3)。
 
+### Part 4
+
+详细介绍了进程调度相关机制，并完成了 RR、PRIORITY、MLFQ 三种调度算法的实现。
+
+完全支持条件编译与自动化测试，并保证向后兼容：
+
+```shell
+make run_test SCHEDULER_TYPE=RR # 选择 RR 调度算法，运行测例与 judger 评分测试
+make run_test SCHEDULER_TYPE=PRIORITY # 选择 PRIORITY 调度算法，运行测例与 judger 评分测试
+make run_test SCHEDULER_TYPE=MLFQ # 选择 MLFQ 调度算法，运行测例与 judger 评分测试
+
+make local # 选择默认调度算法，不运行任何测例
+make local SCHEDULER_TYPE=RR # 选择 RR 调度算法并运行 test_proc_rr 测例
+make local SCHEDULER_TYPE=PRIORITY # 选择 PRIORITY 调度算法并运行 test_proc_priority 测例
+make local SCHEDULER_TYPE=MLFQ # 选择 MLFQ 调度算法并运行 test_proc_mlfq 测例
+```
+
+详细内容参见 [xv6-os-lab-part4 笔记](https://arthals.ink/blog/xv6-os-lab-part4)。
 
 ### Part 7
 
