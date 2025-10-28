@@ -5,6 +5,7 @@ mode := release
 K=kernel
 U=xv6-user
 T=target
+TEST=xv6-user/testcases
 
 OBJS = $K/entry_qemu.o
 
@@ -165,6 +166,13 @@ UPROGS=\
 	# $U/_grind\
 	# $U/_zombie\
 
+# Part4 调度器测试程序
+TESTCASES=\
+	$(TEST)/_judger\
+	$(TEST)/_test_proc_rr\
+	$(TEST)/_test_proc_priority\
+	$(TEST)/_test_proc_mlfq\
+
 userprogs: $(UPROGS)
 
 dst=/mnt
@@ -172,7 +180,7 @@ dst=/mnt
 # @cp $U/_init $(dst)/init
 # @cp $U/_sh $(dst)/sh
 # Make fs image
-fs: $(UPROGS)
+fs: $(UPROGS) $(TESTCASES)
 	@if [ ! -f "fs.img" ]; then \
 		echo "making fs image..."; \
 		dd if=/dev/zero of=fs.img bs=512k count=512; \
@@ -183,6 +191,9 @@ fs: $(UPROGS)
 	@for file in $$( ls $U/_* ); do \
 		cp $$file $(dst)/$${file#$U/_};\
 		cp $$file $(dst)/bin/$${file#$U/_}; done
+	@for file in $$( ls $(TEST)/_* ); do \
+		cp $$file $(dst)/$${file#$(TEST)/_}; \
+	done
 	@cp -r riscv64/* $(dst)
 	@umount $(dst)
 
@@ -220,6 +231,7 @@ clean:
 	.gdbinit \
 	$U/usys.S \
 	$(UPROGS)
+	rm -f $(TEST)/*.d $(TEST)/*.o $(TEST)/*.asm $(TEST)/*.sym $(TEST)/_*
 	
 # 希冀平台所使用的编译命令
 all:
@@ -228,6 +240,14 @@ all:
 	@$(MAKE) build
 	@cp $(T)/kernel ./kernel-qemu
 	@cp ./bootloader/SBI/sbi-qemu ./sbi-qemu
+
+# 助教提供的功能性测试平台所使用的编译命令
+run_test:
+	@$(MAKE) clean
+	@$(MAKE) dump
+	@$(MAKE) build
+	@$(MAKE) fs
+	@$(MAKE) run
 
 # 本地测试所使用的编译命令
 local:

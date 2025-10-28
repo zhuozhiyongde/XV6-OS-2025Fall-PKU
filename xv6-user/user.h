@@ -21,6 +21,7 @@ int fstat(int fd, struct stat*);
 int mkdir(const char *dirname);
 int chdir(const char *dirname);
 int dup(int fd);
+int dup2(int oldfd, int newfd);
 int getpid(void);
 char* sbrk(int size);
 int sleep(int ticks);

@@ -1,10 +1,10 @@
 tags
 fs.img
-xv6-user/_*
-xv6-user/*.d
-xv6-user/*.o
-xv6-user/*.asm
-xv6-user/*.sym
+xv6-user/**/_*
+xv6-user/**/*.d
+xv6-user/**/*.o
+xv6-user/**/*.asm
+xv6-user/**/*.sym
 xv6-user/initcode
 xv6-user/initcode.out
 xv6-user/usys.S
@@ -24,4 +24,5 @@ ref/
 **/*.DS_Store
 test-src/
 test-src
-xv6-k210-template
+xv6-k210-template/
+backup/

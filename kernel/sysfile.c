@@ -154,6 +154,25 @@ fdalloc(struct file *f)
   return -1;
 }
 
+/**
+ * @brief 在指定位置分配文件描述符。
+ * @param f 目标文件
+ * @param fd 指定的新文件描述符
+ * @return 0 成功，-1 失败
+ */
+static int
+fdalloc_at(struct file* f, int fd) {
+  struct proc* p = myproc();
+  if (fd < 0 || fd >= NOFILE) {
+    return -1;
+  }
+  if (p->ofile[fd] != NULL) {
+    return -1;
+  }
+  p->ofile[fd] = f;
+  return 0;
+}
+
 uint64
 sys_dup(void)
 {
@@ -166,6 +185,46 @@ sys_dup(void)
     return -1;
   filedup(f);
   return fd;
+}
+
+/**
+ * @brief 实现 dup2 系统调用，复制文件描述符到指定的新描述符。
+ * @param old_fd 被复制的文件描述符
+ * @param new_fd 目标文件描述符
+ * @return 成功返回 new_fd，失败返回 -1
+ */
+uint64
+sys_dup2(void)
+{
+  struct file* f;
+  int old_fd, new_fd;
+
+  if (argfd(0, &old_fd, &f) < 0 || argint(1, &new_fd) < 0) {
+    return -1;
+  }
+
+  if (new_fd < 0 || new_fd >= NOFILE) {
+    return -1;
+  }
+
+  if (old_fd == new_fd) {
+    return new_fd;
+  }
+
+  // 如果 newfd 已经打开，dup2() 会先将其关闭。
+  // 然后，将 oldfd 复制到 newfd
+  struct proc* p = myproc();
+  if (p->ofile[new_fd] != NULL) {
+    fileclose(p->ofile[new_fd]);
+    p->ofile[new_fd] = NULL;
+  }
+
+  if (fdalloc_at(f, new_fd) < 0) {
+    return -1;
+  }
+
+  filedup(f);
+  return new_fd;
 }
 
 /**

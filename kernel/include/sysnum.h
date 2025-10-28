@@ -13,6 +13,7 @@
 #define SYS_fstat       80   // 获取文件状态
 #define SYS_pipe        59   // 创建管道
 #define SYS_dup         23   // 复制文件描述符
+#define SYS_dup2        33   // 复制文件描述符，支持指定目标
 #define SYS_dup3        24   // 复制文件描述符，支持重定向
 #define SYS_mkdir        7   // 创建目录
 #define SYS_mkdirat     34   // 在指定目录下创建目录
