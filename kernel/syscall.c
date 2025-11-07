@@ -138,6 +138,8 @@ extern uint64 sys_unlinkat(void);
 extern uint64 sys_mount(void);
 extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
+extern uint64 sys_getprocsz(void);
+extern uint64 sys_getpgcnt(void);
 
 #ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
@@ -202,6 +204,8 @@ static uint64 (*syscalls[])(void) = {
   [SYS_set_priority]  sys_set_priority,
   [SYS_get_priority]  sys_get_priority,
   #endif
+  [SYS_getprocsz]   sys_getprocsz,
+  [SYS_getpgcnt]    sys_getpgcnt,
 };
 
 static char *sysnames[] = {
@@ -259,6 +263,8 @@ static char *sysnames[] = {
   [SYS_set_priority] "set_priority",
   [SYS_get_priority] "get_priority",
   #endif
+  [SYS_getprocsz]   "getprocsz",
+  [SYS_getpgcnt]    "getpgcnt",
 };
 
 void

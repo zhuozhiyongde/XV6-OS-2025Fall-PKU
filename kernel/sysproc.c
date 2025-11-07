@@ -160,6 +160,25 @@ sys_sbrk(void)
 }
 
 /**
+ * @brief 实现 getprocsz 系统调用，获取进程的堆顶地址。
+ * @return 进程的堆顶地址
+ */
+uint64 sys_getprocsz(void) {
+  acquire(&myproc()->lock);
+  int sz = myproc()->sz;
+  release(&myproc()->lock);
+  return sz;
+}
+
+/**
+ * @brief TODO: 实现 getpgcnt 系统调用，获取当前已分配物理内存的页数。
+ * @return 当前已分配物理内存的页数
+ */
+uint64 sys_getpgcnt(void) {
+  return 0;
+}
+
+/**
  * @brief 实现 brk 系统调用，用于调整程序数据段（Heap，堆）的大小。
  * @param addr 新的数据段结束地址
  * @return 0 成功，-1 失败，特别地，brk(0) 返回当前堆的终点地址
