@@ -38,6 +38,8 @@ int shutdown(void);
 int set_timeslice(int);
 int set_priority(int);
 int get_priority(void);
+int getprocsz(void);
+int getpgcnt(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

@@ -46,3 +46,5 @@ entry("dup2");
 entry("set_timeslice");
 entry("set_priority");
 entry("get_priority");
+entry("getprocsz");
+entry("getpgcnt");

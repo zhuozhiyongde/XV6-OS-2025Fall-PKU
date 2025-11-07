@@ -1,4 +1,3 @@
-# platform	:= k210
 platform	:= qemu
 # mode := debug
 mode := release
@@ -65,18 +64,22 @@ endif
 
 CFLAGS += -D QEMU
 
-# Part 4: 选择调度器类型
-USER_CFLAGS = 
-SCHEDULER_TYPE = 
-TEST_PROGRAM = 
+# 功能性测试框架
+USER_CFLAGS =
+TEST_PROGRAM =
 ENABLE_JUDGER =
 
 ifeq ($(ENABLE_JUDGER), 1)
   CFLAGS += -DENABLE_JUDGER
   USER_CFLAGS += -DENABLE_JUDGER
-  ifeq ($(SCHEDULER_TYPE),)
-    $(error SCHEDULER_TYPE is not defined, use make run_test SCHEDULER_TYPE=RR/PRIORITY/MLFQ)
-  endif
+endif
+
+# Part 4: 选择调度器类型
+SCHEDULER_TYPE = 
+
+ifneq ($(SCHEDULER_TYPE),)
+  CFLAGS += -DSCHEDULER_TYPE
+  USER_CFLAGS += -DSCHEDULER_TYPE
 endif
 
 ifeq ($(SCHEDULER_TYPE), RR)
@@ -93,11 +96,31 @@ else ifeq ($(SCHEDULER_TYPE), MLFQ)
   USER_CFLAGS += -DSCHEDULER_MLFQ
 endif
 
+# END Part 4
+
+# Part 5: 选择内存机制测试类型
+TYPE = 
+
+ifneq ($(TYPE),)
+  CFLAGS += -DTYPE
+  USER_CFLAGS += -DTYPE
+endif
+
+ifeq ($(TYPE), COW)
+	TEST_PROGRAM = test_mem_cow
+	CFLAGS += -DTYPE_COW
+	USER_CFLAGS += -DTYPE_COW
+else ifeq ($(TYPE), LAZY)
+	TEST_PROGRAM = test_mem_lazy_allocation
+	CFLAGS += -DTYPE_LAZY_ALLOCATION
+	USER_CFLAGS += -DTYPE_LAZY_ALLOCATION
+endif
+
+# END Part 5
+
 TEST_PROGRAM := $(strip $(TEST_PROGRAM))
 CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
 USER_CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
-
-# END Part 4
 
 LDFLAGS = -z max-page-size=4096
 
@@ -118,7 +141,6 @@ RUSTSBI:
 	@$(OBJDUMP) -S ./bootloader/SBI/sbi-qemu > $T/rustsbi-qemu.asm
 
 rustsbi-clean:
-	@cd ./bootloader/SBI/rustsbi-k210 && cargo clean
 	@cd ./bootloader/SBI/rustsbi-qemu && cargo clean
 
 image = $T/kernel.bin
