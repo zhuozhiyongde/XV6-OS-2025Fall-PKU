@@ -171,11 +171,11 @@ uint64 sys_getprocsz(void) {
 }
 
 /**
- * @brief TODO: 实现 getpgcnt 系统调用，获取当前已分配物理内存的页数。
+ * @brief 实现 getpgcnt 系统调用，获取当前已分配物理内存的页数。
  * @return 当前已分配物理内存的页数
  */
 uint64 sys_getpgcnt(void) {
-  return 0;
+  return allocated_pages();
 }
 
 /**

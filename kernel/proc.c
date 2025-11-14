@@ -505,18 +505,23 @@ userinit(void)
 int
 growproc(int n)
 {
-  uint sz;
   struct proc *p = myproc();
+  uint64 sz = p->sz;
 
-  sz = p->sz;
-  if(n > 0){
-    if((sz = uvmalloc(p->pagetable, p->kpagetable, sz, sz + n)) == 0) {
+  if (n > 0) {
+    // 懒分配，此时不进行 uvmalloc 分配物理页，只更新 sz，等到用到的时候再通过触发缺页异常来分配物理页
+    uint64 newsz = sz + (uint64)n;
+    if (newsz < sz)
       return -1;
-    }
+    if (newsz >= MMAPBASE)
+      return -1;
+    p->sz = newsz;
   } else if(n < 0){
-    sz = uvmdealloc(p->pagetable, p->kpagetable, sz, sz + n);
+    uint64 delta = (uint64)(-n);
+    uint64 newsz = (delta > sz) ? 0 : sz - delta;
+    uvmdealloc(p->pagetable, p->kpagetable, sz, newsz);
+    p->sz = newsz;
   }
-  p->sz = sz;
   return 0;
 }
 

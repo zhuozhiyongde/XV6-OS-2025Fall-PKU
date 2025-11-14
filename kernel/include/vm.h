@@ -24,6 +24,7 @@ void            uvmfree(pagetable_t, uint64);
 void            vmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
 uint64          walkaddr(pagetable_t, uint64);
+pte_t*          walk(pagetable_t, uint64, int);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
@@ -35,6 +36,7 @@ int             copyout2(uint64 dstva, char *src, uint64 len);
 int             copyin2(char *dst, uint64 srcva, uint64 len);
 int             copyinstr2(char *dst, uint64 srcva, uint64 max);
 void            vmprint(pagetable_t pagetable);
+int             cow_make_writable(struct proc *p, uint64 va);
 
 // vma （virtual memory area） 相关函数和宏定义
 #define NVMA 16
