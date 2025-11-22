@@ -196,6 +196,21 @@ make local SCHEDULER_TYPE=MLFQ # 选择 MLFQ 调度算法并运行 test_proc_mlf
 
 详细内容参见 [xv6-os-lab-part4 笔记](https://arthals.ink/blog/xv6-os-lab-part4)。
 
+### Part 5
+
+详细介绍了懒分配和写时复制相关机制，并完成了 COW 和懒分配的实现。
+
+由于他们彼此机制上并不冲突，并且正确实现后对于已有测例均无影响，所以这里不做条件编译，直接实现为默认机制。
+
+完全支持自动化测试，并保证向后兼容：
+
+```shell
+make run_test TYPE=COW # 选择 COW 内存机制，运行测例与 judger 评分测试
+make run_test TYPE=LAZY # 选择 LAZY 内存机制，运行测例与 judger 评分测试
+```
+
+详细内容参见 [xv6-os-lab-part5 笔记](https://arthals.ink/blog/xv6-os-lab-part5)。
+
 ### Part 7
 
 详细介绍了 FAT32 文件系统相关机制，并实现了如下系统调用：
