@@ -644,3 +644,37 @@ uint64 sys_get_priority(void) {
   return priority;
 }
 #endif
+
+/**
+ * @brief 设置最大物理页数
+ * @param max_page_in_mem 最大物理页数
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_set_max_page_in_mem(void) {
+  int max_page_in_mem;
+  if (argint(0, &max_page_in_mem) < 0) {
+    return -1;
+  }
+  return 0;
+}
+
+/**
+ * @brief 获取交换次数
+ * @return 交换次数
+ */
+uint64 sys_get_swap_count(void) {
+  return 0;
+}
+
+/**
+ * @brief 通知LRU页面替换算法
+ * @param addr 地址
+ * @return 0 成功，-1 失败
+ */
+uint64 sys_lru_access_notify(void) {
+  uint64 addr;
+  if (argaddr(0, &addr) < 0) {
+    return -1;
+  }
+  return 0;
+}

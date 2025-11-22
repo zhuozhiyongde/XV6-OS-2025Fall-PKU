@@ -55,6 +55,9 @@
 #define SYS_mmap       222   // 映射文件或设备到内存
 #define SYS_getprocsz  500   // 获取进程的内存使用情况
 #define SYS_getpgcnt   501   // 获取当前已分配物理内存的页数
+#define SYS_set_max_page_in_mem 600 // 设置最大物理页数
+#define SYS_get_swap_count 601 // 获取交换次数
+#define SYS_lru_access_notify 602 // 通知LRU页面替换算法
 
 
 // Others (其他)

@@ -140,6 +140,9 @@ extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
 extern uint64 sys_getprocsz(void);
 extern uint64 sys_getpgcnt(void);
+extern uint64 sys_set_max_page_in_mem(void);
+extern uint64 sys_get_swap_count(void);
+extern uint64 sys_lru_access_notify(void);
 
 #ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
@@ -206,6 +209,9 @@ static uint64 (*syscalls[])(void) = {
   #endif
   [SYS_getprocsz]   sys_getprocsz,
   [SYS_getpgcnt]    sys_getpgcnt,
+  [SYS_set_max_page_in_mem] sys_set_max_page_in_mem,
+  [SYS_get_swap_count] sys_get_swap_count,
+  [SYS_lru_access_notify] sys_lru_access_notify,
 };
 
 static char *sysnames[] = {
@@ -265,6 +271,9 @@ static char *sysnames[] = {
   #endif
   [SYS_getprocsz]   "getprocsz",
   [SYS_getpgcnt]    "getpgcnt",
+  [SYS_set_max_page_in_mem] "set_max_page_in_mem",
+  [SYS_get_swap_count] "get_swap_count",
+  [SYS_lru_access_notify] "lru_access_notify",
 };
 
 void

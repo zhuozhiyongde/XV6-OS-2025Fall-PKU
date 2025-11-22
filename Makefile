@@ -118,6 +118,26 @@ endif
 
 # END Part 5
 
+# Part 6: 选择页面置换算法测试类型
+ALGO = 
+
+ifneq ($(ALGO),)
+  CFLAGS += -DALGO
+  USER_CFLAGS += -DALGO
+endif
+
+ifeq ($(ALGO), FIFO)
+  TEST_PROGRAM = test_vm_fifo
+  CFLAGS += -DALGO_FIFO
+  USER_CFLAGS += -DALGO_FIFO
+else ifeq ($(ALGO), LRU)
+  TEST_PROGRAM = test_vm_lru
+  CFLAGS += -DALGO_LRU
+  USER_CFLAGS += -DALGO_LRU
+endif
+
+# END Part 6
+
 TEST_PROGRAM := $(strip $(TEST_PROGRAM))
 CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
 USER_CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"

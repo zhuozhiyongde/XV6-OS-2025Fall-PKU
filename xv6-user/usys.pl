@@ -48,3 +48,8 @@ entry("set_priority");
 entry("get_priority");
 entry("getprocsz");
 entry("getpgcnt");
+entry("mmap");
+entry("munmap");
+entry("set_max_page_in_mem");
+entry("get_swap_count");
+entry("lru_access_notify");
