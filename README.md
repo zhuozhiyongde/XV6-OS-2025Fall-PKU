@@ -234,4 +234,4 @@ make run_test TYPE=LAZY # 选择 LAZY 内存机制，运行测例与 judger 评�
 
 ## 📜 LICENSE
 
-MIT License
+GPL-3.0 license
