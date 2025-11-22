@@ -23,6 +23,11 @@ extern void kernelvec();
 
 int devintr();
 
+static int handle_user_page_fault(struct proc *p, uint64 scause, uint64 stval);
+static int vma_handler(struct proc *p, uint64 scause, uint64 stval);
+static int lazy_handler(struct proc *p, uint64 stval);
+static int cow_handler(struct proc *p, uint64 scause, uint64 stval);
+
 // void
 // trapinit(void)
 // {
@@ -46,6 +51,200 @@ trapinithart(void)
   #endif
 }
 
+/**
+ * @brief 处理写时复制时的缺页异常
+ * @param p 进程
+ * @param scause 异常原因
+ * @param stval 异常地址
+ * @return 0 成功，-1 失败
+ */
+static int
+cow_handler(struct proc *p, uint64 scause, uint64 stval)
+{
+  // scause 15：存储 / AMO 页面故障
+  // 写时复制异常只能是存储访问异常
+  if (scause != 15) {
+    return -1;
+  }
+
+  uint64 va = PGROUNDDOWN(stval);
+  pte_t *pte = walk(p->pagetable, va, 0);
+  if (pte == 0) {
+    return -1;
+  }
+  // 页表项不是 COW 页，直接返回
+  if ((*pte & PTE_COW) == 0) {
+    return -1;
+  }
+
+  // 处理写时复制
+  if (cow_make_writable(p, va) < 0) {
+    printf("cow_handler(): out of memory\n");
+    p->killed = 1;
+  }
+  return 0;
+}
+
+/**
+ * @brief 处理虚拟内存区域异常，包括 mmap 区缺页或者保护错误
+ * @param p 进程
+ * @param scause 异常原因
+ * @param stval 异常地址
+ * @return 0 成功，-1 失败
+ */
+static int
+vma_handler(struct proc *p, uint64 scause, uint64 stval)
+{
+  struct vma* v = 0;
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].valid && stval >= p->vmas[i].start && stval < p->vmas[i].end) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+
+  // 没有找到对应的 VMA，返回错误
+  if (v == 0) {
+    return -1;
+  }
+
+  // 找到了对应的 VMA，检查权限
+  if (
+    (scause == 12 && !(v->prot & PROT_EXEC)) || // 取指缺页，但 VMA 不可执行
+    (scause == 13 && !(v->prot & PROT_READ)) || // 读缺页，但 VMA 不可读
+    (scause == 15 && !(v->prot & PROT_WRITE)) // 写缺页，但 VMA 不可写
+  ) {
+    printf("vma_handler(): protection fault pid=%d %s, va=%p\n", p->pid, p->name, stval);
+    p->killed = 1;
+    return 0;
+  }
+
+  // 以下处理由于 VMA 懒分配导致的缺页异常，按需分配物理页并映射到用户页表、内核页表
+  // 计算缺页地址所在的页的起始地址
+  uint64 va_page_start = PGROUNDDOWN(stval);
+  // 分配一页物理内存
+  char* mem = kalloc();
+  // 分配失败，返回错误
+  if (mem == 0) {
+    printf("vma_handler(): out of memory\n");
+    p->killed = 1;
+    return 0;
+  }
+  // 将新分配的页清零
+  memset(mem, 0, PGSIZE);
+
+  // 如果是文件映射，从文件中读取相应内容到新分配的页
+  if (v->vm_file) {
+    elock(v->vm_file->ep);
+    // 计算文件内的偏移量：VMA 文件偏移 + 页在 VMA 内的偏移
+    uint64 file_offset = v->offset + (va_page_start - v->start);
+    // 从文件读取一页内容到内核地址 mem
+    eread(v->vm_file->ep, 0, (uint64)mem, file_offset, PGSIZE);
+    eunlock(v->vm_file->ep);
+  }
+
+  // 根据 VMA 的保护权限，设置页表项 PTE 的标志位
+  int pte_flags = PTE_U; // PTE_U 表示用户态可访问
+  if (v->prot & PROT_READ) pte_flags |= PTE_R;
+  if (v->prot & PROT_WRITE) pte_flags |= PTE_W;
+  if (v->prot & PROT_EXEC) pte_flags |= PTE_X;
+
+  // 调用 mappages 将物理页 mem 映射到用户虚拟地址 va_page_start
+  if (mappages(p->pagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags) != 0) {
+    // 映射失败，释放刚分配的页
+    kfree(mem);
+    printf("vma_handler(): mappages failed\n");
+    p->killed = 1;
+    return 0;
+  }
+  // 同样需要映射到内核页表
+  if (mappages(p->kpagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags & ~PTE_U) != 0) {
+    kfree(mem);
+    vmunmap(p->pagetable, va_page_start, 1, 1);
+    printf("vma_handler(): kernel mappages failed\n");
+    p->killed = 1;
+    return 0;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief 处理堆懒分配的缺页异常
+ * @param p 进程
+ * @param stval 异常地址
+ * @return 0 成功，-1 失败
+ */
+static int
+lazy_handler(struct proc *p, uint64 stval)
+{
+  // 地址超出堆上限地址或者 mmap 区上限地址，返回错误
+  if (stval >= p->sz || stval >= MMAPBASE) {
+    return -1;
+  }
+
+  // 仿照 vma_handler 的逻辑，分配一页物理内存，并映射到用户页表、内核页表
+  uint64 va_page_start = PGROUNDDOWN(stval);
+  pte_t* pte = walk(p->pagetable, va_page_start, 0);
+  // 如果查到有效 PTE，说明实际已经分配了物理页，直接返回错误
+  if (pte && (*pte & PTE_V)) {
+    return -1;
+  }
+
+  // 分配一页物理内存
+  char* mem = kalloc();
+  // 分配失败，返回错误
+  if (mem == 0) {
+    printf("lazy_handler(): out of memory\n");
+    p->killed = 1;
+    return 0;
+  }
+  // 将新分配的页清零
+  memset(mem, 0, PGSIZE);
+
+  // 用户态页表项标志位
+  int pte_flags = PTE_W | PTE_X | PTE_R | PTE_U;
+  if (mappages(p->pagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags) != 0) {
+    kfree(mem);
+    printf("lazy_handler(): mappages failed\n");
+    p->killed = 1;
+    return 0;
+  }
+  // 内核态页表项标志位
+  int kpte_flags = pte_flags & ~PTE_U;
+  if (mappages(p->kpagetable, va_page_start, PGSIZE, (uint64)mem, kpte_flags) != 0) {
+    kfree(mem);
+    vmunmap(p->pagetable, va_page_start, 1, 1);
+    printf("lazy_handler(): kernel mappages failed\n");
+    p->killed = 1;
+    return 0;
+  }
+
+  return 0;
+}
+
+/**
+ * @brief 处理用户页缺页异常
+ * @param p 进程
+ * @param scause 异常原因
+ * @param stval 异常地址
+ * @return 0 成功，-1 失败
+ */
+static int
+handle_user_page_fault(struct proc *p, uint64 scause, uint64 stval)
+{
+  if (cow_handler(p, scause, stval) == 0) {
+    return 0;
+  }
+  if (vma_handler(p, scause, stval) == 0) {
+    return 0;
+  }
+  if (lazy_handler(p, stval) == 0) {
+    return 0;
+  }
+  return -1;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,8 +266,9 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
-  
-  if(r_scause() == 8){
+
+  // 系统调用，r_scause() == 8，即 syscall
+  if (r_scause() == 8) {
     // system call
     if(p->killed)
       exit(-1);
@@ -80,6 +280,7 @@ usertrap(void)
     intr_on();
     syscall();
   } 
+  // 外部中断或设备中断，r_scause() != 8
   else if((which_dev = devintr()) != 0){
     // ok
   } 
@@ -93,78 +294,9 @@ usertrap(void)
     // 15: Store/AMO page fault (写缺页)
     // 12: Instruction page fault (取指缺页)
     if (scause == 12 || scause == 13 || scause == 15) {
-      // 在当前进程的 VMA 列表中查找包含 stval 的区域
-      struct vma* v = 0;
-      for (int i = 0; i < NVMA; i++) {
-        if (p->vmas[i].valid && stval >= p->vmas[i].start && stval < p->vmas[i].end) {
-          v = &p->vmas[i];
-          break;
-        }
-      }
-
-      if (v == 0) {
-        // 地址不属于任何一个合法的 VMA，这是一个段错误 (Segmentation Fault)
+      if (handle_user_page_fault(p, scause, stval) < 0) {
         printf("usertrap(): segfault pid=%d %s, va=%p\n", p->pid, p->name, stval);
         p->killed = 1;
-      }
-      else {
-        // 找到了 VMA，检查访问权限是否合法
-        if (
-          (scause == 12 && !(v->prot & PROT_EXEC)) ||    // 取指缺页，但 VMA 不可执行
-          (scause == 13 && !(v->prot & PROT_READ)) ||    // 读缺页，但 VMA 不可读
-          (scause == 15 && !(v->prot & PROT_WRITE))      // 写缺页，但 VMA 不可写
-        ) {
-          // 权限不匹配，这是保护错误 (Protection Fault)
-          printf("usertrap(): protection fault pid=%d %s, va=%p\n", p->pid, p->name, stval);
-          p->killed = 1;
-        }
-        else {
-          // 权限检查通过，开始处理缺页，为该地址分配物理内存并建立映射
-
-          // 计算缺页地址所在的页的起始地址
-          uint64 va_page_start = PGROUNDDOWN(stval);
-
-          // 分配一页物理内存
-          char* mem = kalloc();
-          if (mem == 0) {
-            printf("usertrap(): out of memory\n");
-            p->killed = 1;
-          }
-          else {
-            // 将新分配的页清零
-            memset(mem, 0, PGSIZE);
-
-            // 如果是文件映射，从文件中读取相应内容到新分配的页
-            if (v->vm_file) {
-              elock(v->vm_file->ep);
-              // 计算文件内的偏移量：VMA 文件偏移 + 页在 VMA 内的偏移
-              uint64 file_offset = v->offset + (va_page_start - v->start);
-              // 从文件读取一页内容到内核地址 mem
-              eread(v->vm_file->ep, 0, (uint64)mem, file_offset, PGSIZE);
-              eunlock(v->vm_file->ep);
-            }
-
-            // 根据 VMA 的保护权限，设置页表项 PTE 的标志位
-            int pte_flags = PTE_U; // PTE_U 表示用户态可访问
-            if (v->prot & PROT_READ) pte_flags |= PTE_R;
-            if (v->prot & PROT_WRITE) pte_flags |= PTE_W;
-            if (v->prot & PROT_EXEC) pte_flags |= PTE_X;
-
-            // 调用 mappages 将物理页 mem 映射到用户虚拟地址 va_page_start
-            if (mappages(p->pagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags) != 0) {
-              // 映射失败，释放刚分配的页
-              kfree(mem); 
-              printf("usertrap(): mappages failed\n");
-              p->killed = 1;
-            }
-            // 同样需要映射到内核页表
-            if (mappages(p->kpagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags & ~PTE_U) != 0) {
-              kfree(mem);
-              vmunmap(p->pagetable, va_page_start, 1, 1);
-              p->killed = 1;
-            }
-          }
-        }
       }
     }
     else {
@@ -178,7 +310,7 @@ usertrap(void)
   if(p->killed)
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
+  // 时钟中断，需要进行调度
   if (which_dev == 2) {
     #ifdef SCHEDULER_RR
     // RR 算法：进入时间中断后，处理时间片递减与抢占逻辑

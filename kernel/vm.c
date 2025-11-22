@@ -380,10 +380,39 @@ uvmfree(pagetable_t pagetable, uint64 sz)
   freewalk(pagetable);
 }
 
+/**
+ * @brief 回滚 COW 操作，将 PTE_COW 标记的页恢复为可写状态
+ * @param pagetable 页表
+ * @param upto 要回滚的结束地址
+ * @note 用于在 fork 失败时恢复父进程的页表状态
+ */
+static void
+revert_cow(pagetable_t pagetable, uint64 upto) {
+  for (uint64 va = 0; va < upto; va += PGSIZE) {
+    pte_t* pte = walk(pagetable, va, 0);
+    // 页表项不存在，跳过
+    if (pte == 0)
+      continue;
+    // 页表项无效，跳过
+    if ((*pte & PTE_V) == 0)
+      continue;
+    // 页表项不是 COW 页，跳过
+    if ((*pte & PTE_COW) == 0)
+      continue;
+    // 获取物理页地址
+    uint64 pa = PTE2PA(*pte);
+    // 如果物理页引用计数为 1，则恢复为可写状态
+    if (getref(pa) == 1) {
+      // 强制加写权限，移除 COW 位
+      uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+      *pte = PA2PTE(pa) | flags;
+    }
+  }
+}
+
 // Given a parent process's page table, copy
-// its memory into a child's page table.
-// Copies both the page table and the
-// physical memory.
+// its memory into a child's page table using
+// copy-on-write(COW) semantics.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
 int
@@ -392,7 +421,6 @@ uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
   pte_t *pte;
   uint64 pa, i = 0, ki = 0;
   uint flags;
-  char *mem;
 
   while (i < sz){
     if((pte = walk(old, i, 0)) == NULL)
@@ -401,24 +429,53 @@ uvmcopy(pagetable_t old, pagetable_t new, pagetable_t knew, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == NULL)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
+    uint64 child_flags = flags;
+    int need_cow = 0;
+
+    // 如果父页是可写或已经是 COW，说明需要共享页
+    // 已经是 COW 的情况：fork() 之后又有 fork()
+    if ((flags & PTE_W) || (flags & PTE_COW)) {
+      // 移除 PTE_W，增加 PTE_COW
+      child_flags &= ~PTE_W;
+      child_flags |= PTE_COW;
+      need_cow = 1;
+    }
+
+    // 将子用户页表项相应虚拟页映射到父进程对应页表项的物理页，权限为 child_flags
+    if (mappages(new, i, PGSIZE, pa, child_flags) != 0) {
       goto err;
     }
     i += PGSIZE;
-    if(mappages(knew, ki, PGSIZE, (uint64)mem, flags & ~PTE_U) != 0){
+
+    // 内核态页表项需要先移除 PTE_U 和 PTE_COW 标志
+    // PTE_COW 在内核态页表项中没有意义，发生写异常时是根据用户态页表项的 PTE_COW 位来决定是否触发写时复制
+    // 如果触发，会清除同一物理页的所有用户态页面 PTE_COW 位，并新分配物理页然后拷贝数据、更新内核态用户态页表项
+    uint64 kchild_flags = child_flags;
+    kchild_flags &= ~PTE_U;
+    kchild_flags &= ~PTE_COW;
+    if (mappages(knew, ki, PGSIZE, pa, kchild_flags) != 0) {
       goto err;
+    }
+    // 增加物理页引用计数
+    incref(pa);
+
+    // 如果需要触发写时复制，则更新父页表项，设置权限与 child_flags 相同
+    // 即无 PTE_W，有 PTE_COW
+    if (need_cow) {
+      *pte = PA2PTE(pa) | child_flags;
     }
     ki += PGSIZE;
   }
+
+  // 刷新 TLB
+  sfence_vma();
   return 0;
 
  err:
   vmunmap(knew, 0, ki / PGSIZE, 0);
   vmunmap(new, 0, i / PGSIZE, 1);
+  revert_cow(old, i);
+  sfence_vma();
   return -1;
 }
 
@@ -460,14 +517,100 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   return 0;
 }
 
+/**
+ * @brief 对给定虚拟地址所在的页，如果是 COW 页，则根据引用计数决定是直接恢复写权限还是复制一份新页，同时同步更新用户页表和内核页表。
+ * @param p 进程
+ * @param va 虚拟地址
+ * @return 0 成功，-1 失败
+ */
+int
+cow_make_writable(struct proc *p, uint64 va)
+{
+  pagetable_t pagetable = p->pagetable;
+  uint64 va0 = PGROUNDDOWN(va);
+  pte_t* pte = walk(pagetable, va0, 0);
+  // 页表项不存在或无效，返回错误
+  if (pte == 0 || (*pte & PTE_V) == 0)
+    return -1;
+  // 页表项不是 COW 页，直接返回
+  if((*pte & PTE_COW) == 0)
+    return 0;
+
+  // 获取物理页地址
+  uint64 pa = PTE2PA(*pte);
+  int ref = getref(pa);
+  // 引用计数小于 1，panic
+  if (ref < 1) {
+    panic("cow_make_writable");
+  }
+
+  // 引用计数为 1，说明是最后一个引用
+  if (ref == 1) {
+    // 直接恢复 PTE_W 位、移除 PTE_COW 位
+    uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+    *pte = PA2PTE(pa) | flags;
+    // 类似地更新内核页表
+    pte_t* kpte = walk(p->kpagetable, va0, 0);
+    if(kpte == 0)
+      panic("cow_make_writable kpte");
+    uint64 kflags = (PTE_FLAGS(*kpte) | PTE_W) & ~PTE_COW;
+    *kpte = PA2PTE(pa) | kflags;
+    sfence_vma();
+    return 0;
+  }
+
+  // 引用计数 > 1，触发写时复制，需要分配新页、复制数据、更新父进程和其内核页表
+  char* mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memmove(mem, (char*)pa, PGSIZE);
+  // 更新用户页表，设置 PTE_W 位、移除 PTE_COW 位
+  uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+  *pte = PA2PTE((uint64)mem) | flags;
+  // 类似地更新内核页表
+  pte_t* kpte = walk(p->kpagetable, va0, 0);
+  if(kpte == 0)
+    panic("cow_make_writable kpte");
+  uint64 kflags = (PTE_FLAGS(*kpte) | PTE_W) & ~PTE_COW;
+  *kpte = PA2PTE((uint64)mem) | kflags;
+  sfence_vma();
+  kfree((void*)pa);
+  return 0;
+}
+
+/**
+ * @brief 将内核空间的数据拷贝到用户空间
+ * @param dstva 目标虚拟地址
+ * @param src 源数据
+ * @param len 长度
+ * @return 0 成功，-1 失败
+ */
 int
 copyout2(uint64 dstva, char *src, uint64 len)
 {
-  uint64 sz = myproc()->sz;
+  struct proc *p = myproc();
+  uint64 sz = p->sz;
   if (dstva + len > sz || dstva >= sz) {
     return -1;
   }
-  memmove((void *)dstva, src, len);
+  // 这里原先是直接一个大的 memmove，但是我们现在要处理 COW，所以必须保证每次复制都在一个整页以内
+  while (len > 0) {
+    uint64 va0 = PGROUNDDOWN(dstva);
+    // 处理 COW，确保目标页可写
+    if (cow_make_writable(p, va0) < 0){
+      return -1;
+    }
+    // 拷贝数据，初次拷贝可能非整页，而是复制了 [dstva, va0+PGSIZE) 之间的数据
+    // 后续拷贝时，n 就是整页大小 PGSIZE
+    // 最后一次拷贝时，n = len <= PGSIZE
+    uint64 n = PGSIZE - (dstva - va0);
+    if (n > len)
+      n = len;
+    memmove((void *)dstva, src, n);
+    len -= n;
+    src += n;
+    dstva = va0 + PGSIZE;
+  }
   return 0;
 }
 
