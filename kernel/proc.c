@@ -29,6 +29,131 @@ extern void swtch(struct context*, struct context*);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc* p);
 
+#ifdef ALGO
+/**
+ * @brief 重置 mmap 跟踪页的状态，清除时间戳和 swap 数据。
+ * @param page 待重置的页面元数据指针
+ */
+static void reset_vma_page(struct mmap_vpage *page) {
+  page->state = VMA_PAGE_UNUSED;
+  page->load_time = 0;
+  page->last_access = 0;
+  page->swap_data = 0;
+}
+
+/**
+ * @brief 回收克隆 VMA 过程中分配的 swap 缓冲并重置元数据。
+ * @param v 目标 VMA
+ * @param upto 已处理的页数量
+ */
+static void cleanup_cloned_pages(struct vma *v, int upto) {
+  if (v->pages == 0) {
+    return;
+  }
+  for (int i = 0; i < upto; i++) {
+    if (v->pages[i].swap_data) {
+      kfree(v->pages[i].swap_data);
+      v->pages[i].swap_data = 0;
+    }
+    reset_vma_page(&v->pages[i]);
+  }
+}
+
+/**
+ * @brief 克隆源 VMA 的页追踪信息，包括驻留页和 swap 中的数据。
+ * @param src_proc 源进程指针
+ * @param dst 目标 VMA
+ * @param src 源 VMA
+ * @return 0 成功，-1 失败（kalloc 失败）
+ */
+static int clone_vma_pages(struct proc *src_proc, struct vma* dst, struct vma* src) {
+  if (src->pages == 0) {
+    dst->page_count = 0;
+    return 0;
+  }
+  int total = src->page_count;
+  if (total <= 0) {
+    total = (src->end - src->start) / PGSIZE;
+  }
+  if (total > VMA_MAX_TRACKED_PAGES) {
+    total = VMA_MAX_TRACKED_PAGES;
+  }
+
+  if (dst->pages == 0) {
+    dst->pages = (struct mmap_vpage*)kalloc();
+    if (dst->pages == 0) {
+      return -1;
+    }
+  } else {
+    cleanup_cloned_pages(dst, VMA_MAX_TRACKED_PAGES);
+  }
+
+  for (int i = 0; i < VMA_MAX_TRACKED_PAGES; i++) {
+    reset_vma_page(&dst->pages[i]);
+  }
+
+  for (int i = 0; i < total; i++) {
+    struct mmap_vpage *src_page = &src->pages[i];
+    struct mmap_vpage *dst_page = &dst->pages[i];
+    if (src_page->state == VMA_PAGE_SWAPPED && src_page->swap_data) {
+      char* buf = kalloc();
+      if (buf == 0) {
+        cleanup_cloned_pages(dst, i);
+        return -1;
+      }
+      memmove(buf, src_page->swap_data, PGSIZE);
+      dst_page->swap_data = buf;
+      dst_page->state = VMA_PAGE_SWAPPED;
+      continue;
+    }
+    if (src_page->state == VMA_PAGE_INMEM) {
+      uint64 va = src->start + (uint64)i * PGSIZE;
+      uint64 pa = walkaddr(src_proc->pagetable, va);
+      if (pa == 0) {
+        continue;
+      }
+      char* buf = kalloc();
+      if (buf == 0) {
+        cleanup_cloned_pages(dst, i);
+        return -1;
+      }
+      memmove(buf, (char*)pa, PGSIZE);
+      dst_page->swap_data = buf;
+      dst_page->state = VMA_PAGE_SWAPPED;
+    }
+  }
+  dst->page_count = total;
+  return 0;
+}
+#endif
+
+/**
+ * @brief 拷贝源进程的 VMA 元数据到目标进程，并复制 mmap 追踪信息。
+ * @param dst 目标进程
+ * @param src 源进程
+ * @return 0 成功，-1 失败
+ */
+static int copy_process_vmas(struct proc* dst, struct proc* src) {
+  for (int i = 0; i < NVMA; i++) {
+    if (!src->vmas[i].valid) {
+      dst->vmas[i].valid = 0;
+      continue;
+    }
+    dst->vmas[i] = src->vmas[i];
+    if (dst->vmas[i].vm_file) {
+      dst->vmas[i].vm_file = filedup(dst->vmas[i].vm_file);
+    }
+    
+    #ifdef ALGO
+    dst->vmas[i].pages = 0;
+    if (clone_vma_pages(src, &dst->vmas[i], &src->vmas[i]) < 0) {
+      return -1;
+    }
+    #endif
+  }
+  return 0;
+}
+
 #ifdef SCHEDULER_RR
 /**
  * @brief RR 算法所需内核函数，处理时间片递减与抢占逻辑
@@ -308,6 +433,13 @@ found:
   p->sleep_ticks = 0;
   #endif
   
+
+  #ifdef ALGO
+  p->max_page_in_mem = VMA_MAX_TRACKED_PAGES;
+  p->mmap_pages_in_mem = 0;
+  p->swap_count = 0;
+  #endif
+  
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == NULL){
     release(&p->lock);
@@ -379,6 +511,12 @@ freeproc(struct proc *p)
   p->eval_ticks = 0;
   p->cpu_ticks = 0;
   p->sleep_ticks = 0;
+  #endif
+
+  #ifdef ALGO
+  p->max_page_in_mem = VMA_MAX_TRACKED_PAGES;
+  p->mmap_pages_in_mem = 0;
+  p->swap_count = 0;
   #endif
 }
 
@@ -571,11 +709,24 @@ fork(void)
   np->sleep_ticks = 0;
   #endif
 
+  #ifdef ALGO
+  np->max_page_in_mem = p->max_page_in_mem;
+  np->mmap_pages_in_mem = 0;
+  np->swap_count = 0;
+  #endif
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
+
+  if (copy_process_vmas(np, p) < 0) {
+    vma_free(np);
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
@@ -584,17 +735,6 @@ fork(void)
   np->cwd = edup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
-
-  // 父子进程应当具有相同的 vma，进行拷贝
-  // 需要在设置 RUNNABLE 之前进行
-  for (int i = 0; i < NVMA; i++) {
-    if (p->vmas[i].valid) {
-      np->vmas[i] = p->vmas[i];
-      if (np->vmas[i].vm_file) {
-        filedup(np->vmas[i].vm_file);
-      }
-    }
-  }
 
   pid = np->pid;
 
@@ -659,6 +799,12 @@ clone(void)
   np->sleep_ticks = 0;
   #endif
 
+  #ifdef ALGO
+  np->max_page_in_mem = p->max_page_in_mem;
+  np->mmap_pages_in_mem = 0;
+  np->swap_count = 0;
+  #endif
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -686,6 +832,13 @@ clone(void)
   // Cause fork to return 0 in the child.
   np->trapframe->a0 = 0;
 
+  if (copy_process_vmas(np, p) < 0) {
+    vma_free(np);
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
     if(p->ofile[i])
@@ -693,16 +846,6 @@ clone(void)
   np->cwd = edup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
-
-  // 类似 fork 进行修改
-  for (int i = 0; i < NVMA; i++) {
-    if (p->vmas[i].valid) {
-      np->vmas[i] = p->vmas[i];
-      if (np->vmas[i].vm_file) {
-        filedup(np->vmas[i].vm_file);
-      }
-    }
-  }
 
   pid = np->pid;
 

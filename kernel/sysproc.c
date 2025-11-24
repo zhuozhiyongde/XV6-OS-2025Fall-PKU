@@ -467,6 +467,13 @@ uint64 sys_mmap(void) {
   // 向上取整到 PGSIZE 的整倍数
   len = PGROUNDUP(len);
 
+  #ifdef ALGO
+  int page_cnt = len / PGSIZE;
+  if (page_cnt > VMA_MAX_TRACKED_PAGES) {
+    return -1;
+  }
+  #endif
+
   // 寻找一个可用的 VMA 位置
   struct vma* v = NULL;
   for (int i = 0; i < NVMA; i++) {
@@ -501,6 +508,12 @@ uint64 sys_mmap(void) {
   v->prot = prot;
   v->flags = flags;
   v->offset = offset;
+  v->valid = 0;
+  
+  #ifdef ALGO
+  v->pages = 0;
+  #endif
+  
   // 如果是文件映射，则需要增加文件的引用计数，并保存文件指针
   if (f) {
     v->vm_file = filedup(f);
@@ -508,6 +521,26 @@ uint64 sys_mmap(void) {
   else {
     v->vm_file = NULL;
   }
+
+  #ifdef ALGO
+  v->page_count = page_cnt;
+  v->pages = (struct mmap_vpage*)kalloc();
+  if (v->pages == 0) {
+    if (v->vm_file) {
+      fileclose(v->vm_file);
+      v->vm_file = NULL;
+    }
+    return -1;
+  }
+  memset(v->pages, 0, PGSIZE);
+  for (int i = 0; i < page_cnt && i < VMA_MAX_TRACKED_PAGES; i++) {
+    v->pages[i].state = VMA_PAGE_UNUSED;
+    v->pages[i].swap_data = 0;
+    v->pages[i].load_time = 0;
+    v->pages[i].last_access = 0;
+  }
+  #endif
+  
   v->valid = 1;
 
   return va;
@@ -559,6 +592,10 @@ uint64 sys_munmap(void) {
         fileclose(v->vm_file);
         v->vm_file = NULL;
       }
+
+      #ifdef ALGO
+      vma_reset_pages(p, v);
+      #endif
 
       // 将 VMA 标记为无效。
       v->valid = 0;
@@ -645,6 +682,7 @@ uint64 sys_get_priority(void) {
 }
 #endif
 
+#ifdef ALGO
 /**
  * @brief 设置最大物理页数
  * @param max_page_in_mem 最大物理页数
@@ -655,6 +693,15 @@ uint64 sys_set_max_page_in_mem(void) {
   if (argint(0, &max_page_in_mem) < 0) {
     return -1;
   }
+
+  if (max_page_in_mem < 1) {
+    return -1;
+  }
+  struct proc* p = myproc();
+  acquire(&p->lock);
+  p->max_page_in_mem = max_page_in_mem;
+  release(&p->lock);
+
   return 0;
 }
 
@@ -663,9 +710,15 @@ uint64 sys_set_max_page_in_mem(void) {
  * @return 交换次数
  */
 uint64 sys_get_swap_count(void) {
-  return 0;
+  struct proc* p = myproc();
+  acquire(&p->lock);
+  int count = p->swap_count;
+  release(&p->lock);
+  return count;
 }
+#endif
 
+#ifdef ALGO_LRU
 /**
  * @brief 通知LRU页面替换算法
  * @param addr 地址
@@ -676,5 +729,28 @@ uint64 sys_lru_access_notify(void) {
   if (argaddr(0, &addr) < 0) {
     return -1;
   }
+
+  struct proc* p = myproc();
+  struct vma* v = 0;
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].valid && addr >= p->vmas[i].start && addr < p->vmas[i].end) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+  if (v == 0) {
+    return -1;
+  }
+  uint64 page_base = PGROUNDDOWN(addr);
+  int page_index = (page_base - v->start) / PGSIZE;
+  if (page_index < 0 || page_index >= v->page_count) {
+    return -1;
+  }
+  if (v->pages == 0) {
+    return -1;
+  }
+  struct mmap_vpage* page = &v->pages[page_index];
+  page->last_access = ticks;
   return 0;
 }
+#endif

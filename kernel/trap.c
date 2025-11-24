@@ -85,6 +85,223 @@ cow_handler(struct proc *p, uint64 scause, uint64 stval)
   return 0;
 }
 
+#ifdef ALGO
+struct swap_victim {
+  struct vma* v;
+  struct mmap_vpage* page;
+  int index;
+};
+
+/**
+ * @brief 从进程的 mmap 区域中挑选可换出的页面。
+ * @param p 进程指针
+ * @param victim 输出受害者页面信息
+ * @return 0 表示找到受害者，-1 表示没有可换页面
+ */
+static int select_victim_page(struct proc *p, struct swap_victim *victim)
+{
+  struct vma* chosen_v = 0;
+  struct mmap_vpage* chosen_page = 0;
+  int chosen_index = -1;
+  uint64 chosen_metric = 0;
+  uint64 chosen_secondary = 0;
+
+  for (int i = 0; i < NVMA; i++) {
+    struct vma* v = &p->vmas[i];
+    if (!v->valid) {
+      continue;
+    }
+    if (v->pages == 0) {
+      continue;
+    }
+    int total_pages = v->page_count;
+    if (total_pages <= 0) {
+      total_pages = (v->end - v->start) / PGSIZE;
+    }
+    if (total_pages > VMA_MAX_TRACKED_PAGES) {
+      total_pages = VMA_MAX_TRACKED_PAGES;
+    }
+    for (int idx = 0; idx < total_pages; idx++) {
+      struct mmap_vpage* page = &v->pages[idx];
+      if (page->state != VMA_PAGE_INMEM) {
+        continue;
+      }
+      uint64 metric;
+      uint64 secondary;
+
+      #ifdef ALGO_FIFO
+      metric = page->load_time;
+      secondary = page->last_access;
+      #else
+      metric = page->last_access;
+      secondary = page->load_time;
+      #endif
+      
+      if (chosen_page == 0 ||
+          metric < chosen_metric ||
+          (metric == chosen_metric && secondary < chosen_secondary)) {
+        chosen_page = page;
+        chosen_v = v;
+        chosen_index = idx;
+        chosen_metric = metric;
+        chosen_secondary = secondary;
+      }
+    }
+  }
+
+  if (chosen_page == 0) {
+    return -1;
+  }
+
+  victim->v = chosen_v;
+  victim->page = chosen_page;
+  victim->index = chosen_index;
+  return 0;
+}
+
+/**
+ * @brief 将一个 mmap 页面换出到 swap 缓冲。
+ * @param p 进程指针
+ * @return 0 成功，-1 失败
+ */
+static int swap_out_one_page(struct proc *p)
+{
+  struct swap_victim victim;
+  if (select_victim_page(p, &victim) < 0) {
+    return -1;
+  }
+
+  uint64 va = victim.v->start + (uint64)victim.index * PGSIZE;
+  pte_t* pte = walk(p->pagetable, va, 0);
+  if (pte == 0 || (*pte & PTE_V) == 0) {
+    return -1;
+  }
+  uint64 pa = PTE2PA(*pte);
+  char* buf = kalloc();
+  if (buf == 0) {
+    return -1;
+  }
+  memmove(buf, (char*)pa, PGSIZE);
+  vmunmap(p->pagetable, va, 1, 1);
+  vmunmap(p->kpagetable, va, 1, 0);
+  victim.page->swap_data = buf;
+  victim.page->state = VMA_PAGE_SWAPPED;
+  victim.page->load_time = 0;
+  victim.page->last_access = ticks;
+  if (p->mmap_pages_in_mem > 0) {
+    p->mmap_pages_in_mem--;
+  }
+  p->swap_count++;
+  return 0;
+}
+
+/**
+ * @brief 确保进程 mmap 区域的驻留页数不超过限制，必要时触发换出。
+ * @param p 进程指针
+ * @return 0 成功，-1 失败
+ */
+static int ensure_mmap_budget(struct proc *p)
+{
+  if (p->max_page_in_mem <= 0) {
+    return 0;
+  }
+  while (p->mmap_pages_in_mem >= p->max_page_in_mem) {
+    if (swap_out_one_page(p) < 0) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+/**
+ * @brief 处理启用页面置换算法时的 VMA 缺页或换入请求。
+ * @param p 触发缺页的进程
+ * @param v 命中的 VMA
+ * @param stval 访问的地址
+ * @return 0 成功，-1 参数错误，-2 表示需要杀死进程
+ */
+static int handle_vma_fault_with_algo(struct proc *p, struct vma *v, uint64 stval)
+{
+  uint64 va_page_start = PGROUNDDOWN(stval);
+  if (va_page_start < v->start || va_page_start >= v->end) {
+    return -1;
+  }
+  int page_index = (va_page_start - v->start) / PGSIZE;
+  if (page_index < 0 || page_index >= VMA_MAX_TRACKED_PAGES) {
+    return -1;
+  }
+  if (page_index >= v->page_count) {
+    return -1;
+  }
+  if (v->pages == 0) {
+    return -1;
+  }
+  struct mmap_vpage* page = &v->pages[page_index];
+  if (page->state == VMA_PAGE_INMEM) {
+    return 0;
+  }
+
+  if (ensure_mmap_budget(p) < 0) {
+    printf("vma_handler(): no victim for swap\n");
+    return -2;
+  }
+
+  char* mem = 0;
+  int from_swap = (page->state == VMA_PAGE_SWAPPED);
+  if (from_swap) {
+    if (page->swap_data == 0) {
+      return -1;
+    }
+    mem = page->swap_data;
+  } else {
+    mem = kalloc();
+    if (mem == 0) {
+      printf("vma_handler(): out of memory\n");
+      return -2;
+    }
+    memset(mem, 0, PGSIZE);
+    if (v->vm_file) {
+      elock(v->vm_file->ep);
+      uint64 file_offset = v->offset + (va_page_start - v->start);
+      eread(v->vm_file->ep, 0, (uint64)mem, file_offset, PGSIZE);
+      eunlock(v->vm_file->ep);
+    }
+  }
+
+  int pte_flags = PTE_U;
+  if (v->prot & PROT_READ)  pte_flags |= PTE_R;
+  if (v->prot & PROT_WRITE) pte_flags |= PTE_W;
+  if (v->prot & PROT_EXEC)  pte_flags |= PTE_X;
+
+  if (mappages(p->pagetable, va_page_start, PGSIZE, (uint64)mem, pte_flags) != 0) {
+    if (!from_swap) {
+      kfree(mem);
+    }
+    printf("vma_handler(): mappages failed\n");
+    return -2;
+  }
+  int kpte_flags = pte_flags & ~PTE_U;
+  if (mappages(p->kpagetable, va_page_start, PGSIZE, (uint64)mem, kpte_flags) != 0) {
+    vmunmap(p->pagetable, va_page_start, 1, 0);
+    if (!from_swap) {
+      kfree(mem);
+    }
+    printf("vma_handler(): kernel mappages failed\n");
+    return -2;
+  }
+
+  if (from_swap) {
+    page->swap_data = 0;
+  }
+  page->state = VMA_PAGE_INMEM;
+  uint64 ts = ticks;
+  page->load_time = ts;
+  page->last_access = ts;
+  p->mmap_pages_in_mem++;
+  return 0;
+}
+#endif
+
 /**
  * @brief 处理虚拟内存区域异常，包括 mmap 区缺页或者保护错误
  * @param p 进程
@@ -119,6 +336,16 @@ vma_handler(struct proc *p, uint64 scause, uint64 stval)
     return 0;
   }
 
+  #ifdef ALGO
+  int algo_ret = handle_vma_fault_with_algo(p, v, stval);
+  if (algo_ret == -1) {
+    return -1;
+  }
+  if (algo_ret < 0) {
+    p->killed = 1;
+  }
+  return 0;
+  #else
   // 以下处理由于 VMA 懒分配导致的缺页异常，按需分配物理页并映射到用户页表、内核页表
   // 计算缺页地址所在的页的起始地址
   uint64 va_page_start = PGROUNDDOWN(stval);
@@ -167,6 +394,7 @@ vma_handler(struct proc *p, uint64 scause, uint64 stval)
   }
 
   return 0;
+  #endif
 }
 
 /**

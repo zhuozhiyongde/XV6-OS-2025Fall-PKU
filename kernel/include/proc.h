@@ -104,6 +104,12 @@ struct proc {
   int base_priority;            // 记录用户设置的基础优先级，用于同级队列的 FIFO 判定
   #endif
 
+  #ifdef ALGO
+  int max_page_in_mem;          // mmap 区域允许驻留的最大物理页数量
+  int mmap_pages_in_mem;        // 当前 mmap 区域驻留物理页数量
+  int swap_count;               // swap-out 次数统计
+  #endif
+
   // vma 相关
   struct vma vmas[NVMA];
 };

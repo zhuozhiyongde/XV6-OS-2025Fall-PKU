@@ -140,9 +140,6 @@ extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
 extern uint64 sys_getprocsz(void);
 extern uint64 sys_getpgcnt(void);
-extern uint64 sys_set_max_page_in_mem(void);
-extern uint64 sys_get_swap_count(void);
-extern uint64 sys_lru_access_notify(void);
 
 #ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
@@ -150,6 +147,15 @@ extern uint64 sys_set_timeslice(void);
 #if defined(SCHEDULER_PRIORITY) || defined(SCHEDULER_MLFQ)
 extern uint64 sys_set_priority(void);
 extern uint64 sys_get_priority(void);
+#endif
+
+#ifdef ALGO
+extern uint64 sys_set_max_page_in_mem(void);
+extern uint64 sys_get_swap_count(void);
+#endif
+
+#ifdef ALGO_LRU
+extern uint64 sys_lru_access_notify(void);
 #endif
 
 static uint64 (*syscalls[])(void) = {
@@ -209,9 +215,13 @@ static uint64 (*syscalls[])(void) = {
   #endif
   [SYS_getprocsz]   sys_getprocsz,
   [SYS_getpgcnt]    sys_getpgcnt,
+  #ifdef ALGO
   [SYS_set_max_page_in_mem] sys_set_max_page_in_mem,
   [SYS_get_swap_count] sys_get_swap_count,
+  #endif
+  #ifdef ALGO_LRU
   [SYS_lru_access_notify] sys_lru_access_notify,
+  #endif
 };
 
 static char *sysnames[] = {
@@ -271,9 +281,13 @@ static char *sysnames[] = {
   #endif
   [SYS_getprocsz]   "getprocsz",
   [SYS_getpgcnt]    "getpgcnt",
+  #ifdef ALGO
   [SYS_set_max_page_in_mem] "set_max_page_in_mem",
   [SYS_get_swap_count] "get_swap_count",
+  #endif
+  #ifdef ALGO_LRU
   [SYS_lru_access_notify] "lru_access_notify",
+  #endif
 };
 
 void

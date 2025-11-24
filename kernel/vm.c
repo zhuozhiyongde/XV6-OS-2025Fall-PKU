@@ -856,6 +856,46 @@ void vma_writeback(struct proc* p, struct vma* v) {
   }
 }
 
+#ifdef ALGO
+/**
+ * @brief 重置并释放 VMA 的 mmap 页面追踪信息。
+ * @param p 所属进程
+ * @param v 目标 VMA
+ */
+void vma_reset_pages(struct proc* p, struct vma* v) {
+  if (p == 0 || v == 0) {
+    return;
+  }
+  if (v->pages == 0) {
+    v->page_count = 0;
+    return;
+  }
+  int page_cnt = v->page_count;
+  if (page_cnt <= 0) {
+    page_cnt = (v->end - v->start) / PGSIZE;
+  }
+  if (page_cnt > VMA_MAX_TRACKED_PAGES) {
+    page_cnt = VMA_MAX_TRACKED_PAGES;
+  }
+  for (int i = 0; i < page_cnt; i++) {
+    struct mmap_vpage* page = &v->pages[i];
+    if (page->state == VMA_PAGE_INMEM && p->mmap_pages_in_mem > 0) {
+      p->mmap_pages_in_mem--;
+    }
+    if (page->state == VMA_PAGE_SWAPPED && page->swap_data) {
+      kfree(page->swap_data);
+    }
+    page->state = VMA_PAGE_UNUSED;
+    page->load_time = 0;
+    page->last_access = 0;
+    page->swap_data = 0;
+  }
+  v->page_count = 0;
+  kfree((char*)v->pages);
+  v->pages = 0;
+}
+#endif
+
 
 /**
  * @brief 释放进程的 VMA
@@ -879,6 +919,10 @@ void vma_free(struct proc* p) {
         fileclose(v->vm_file);
         v->vm_file = NULL;
       }
+
+      #ifdef ALGO
+      vma_reset_pages(p, v);
+      #endif
 
       v->valid = 0;
     }
