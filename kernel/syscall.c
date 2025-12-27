@@ -140,6 +140,10 @@ extern uint64 sys_umount(void);
 extern uint64 sys_dup2(void);
 extern uint64 sys_getprocsz(void);
 extern uint64 sys_getpgcnt(void);
+extern uint64 sys_sem_p(void);
+extern uint64 sys_sem_v(void);
+extern uint64 sys_sem_create(void);
+extern uint64 sys_sem_destroy(void);
 
 #ifdef SCHEDULER_RR
 extern uint64 sys_set_timeslice(void);
@@ -206,6 +210,10 @@ static uint64 (*syscalls[])(void) = {
   [SYS_unlinkat]    sys_unlinkat,
   [SYS_mount]       sys_mount,
   [SYS_umount]      sys_umount,
+  [SYS_sem_p]        sys_sem_p,
+  [SYS_sem_v]        sys_sem_v,
+  [SYS_sem_create]   sys_sem_create,
+  [SYS_sem_destroy]  sys_sem_destroy,
   #ifdef SCHEDULER_RR
   [SYS_set_timeslice] sys_set_timeslice,
   #endif
@@ -272,6 +280,10 @@ static char *sysnames[] = {
   [SYS_unlinkat]    "unlinkat",
   [SYS_mount]       "mount",
   [SYS_umount]      "umount",
+  [SYS_sem_p]        "sem_p",
+  [SYS_sem_v]        "sem_v",
+  [SYS_sem_create]   "sem_create",
+  [SYS_sem_destroy]  "sem_destroy",
   #ifdef SCHEDULER_RR
   [SYS_set_timeslice] "set_timeslice",
   #endif

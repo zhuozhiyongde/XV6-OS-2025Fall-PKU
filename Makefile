@@ -33,7 +33,8 @@ OBJS += \
   $K/disk.o \
   $K/fat32.o \
   $K/plic.o \
-  $K/console.o
+  $K/console.o \
+  $K/semaphore.o
 
 OBJS += \
   $K/virtio_disk.o \

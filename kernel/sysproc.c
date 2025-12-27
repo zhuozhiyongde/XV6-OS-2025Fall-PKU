@@ -11,6 +11,7 @@
 #include "include/string.h"
 #include "include/printf.h"
 #include "include/sbi.h"
+#include "include/semaphore.h"
 #include "include/vm.h"
 
 extern int exec(char *path, char **argv);
@@ -343,6 +344,66 @@ uint64
 sys_shutdown(void) {
   sbi_shutdown();
   return 0;
+}
+
+/**
+ * @brief 创建信号量，设置初始计数。
+ * @param init_value (a0) 初始计数
+ * @return 成功返回信号量 id，失败返回 -1
+ */
+uint64
+sys_sem_create(void)
+{
+  int init;
+  if (argint(0, &init) < 0) {
+    return -1;
+  }
+  return sem_create(init);
+}
+
+/**
+ * @brief 按 id 销毁信号量。
+ * @param semid (a0) 信号量 id
+ * @return 成功返回 0，失败返回 -1
+ */
+uint64
+sys_sem_destroy(void)
+{
+  int id;
+  if (argint(0, &id) < 0) {
+    return -1;
+  }
+  return sem_destroy(id);
+}
+
+/**
+ * @brief P（等待）操作，计数为 0 时阻塞。
+ * @param semid (a0) 信号量 id
+ * @return 成功返回 0，失败返回 -1
+ */
+uint64
+sys_sem_p(void)
+{
+  int id;
+  if (argint(0, &id) < 0) {
+    return -1;
+  }
+  return sem_p(id);
+}
+
+/**
+ * @brief V（释放）操作，计数加一并唤醒等待者。
+ * @param semid (a0) 信号量 id
+ * @return 成功返回 0，失败返回 -1
+ */
+uint64
+sys_sem_v(void)
+{
+  int id;
+  if (argint(0, &id) < 0) {
+    return -1;
+  }
+  return sem_v(id);
 }
 
 /**
