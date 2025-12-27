@@ -69,4 +69,10 @@
 #define SYS_trace       18   // 用于调试，追踪系统调用
 #define SYS_test_proc   22   // 自定义的测试调用
 
+// Semaphore related (信号量相关)
+#define SYS_sem_p           800 // 信号量P操作
+#define SYS_sem_v           801 // 信号量V操作
+#define SYS_sem_create      802 // 创建信号量
+#define SYS_sem_destroy     803 // 销毁信号量
+
 #endif

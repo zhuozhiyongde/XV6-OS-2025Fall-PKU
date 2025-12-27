@@ -138,6 +138,23 @@ endif
 
 # END Part 6
 
+# Part 8: IPC 信号量
+CASE =
+
+ifneq ($(CASE),)
+  CFLAGS += -DCASE
+  USER_CFLAGS += -DCASE
+endif
+ifeq ($(CASE), MPMC)
+  TEST_PROGRAM = test_ipc_producer_consumer
+  CFLAGS += -DTYPE_PRODUCER
+  USER_CFLAGS += -DTYPE_PRODUCER
+else ifeq ($(CASE), PHILOSOPHER)
+  TEST_PROGRAM = test_ipc_philosopher
+  CFLAGS += -DTYPE_PHILOSOPHER
+  USER_CFLAGS += -DTYPE_PHILOSOPHER
+endif
+
 TEST_PROGRAM := $(strip $(TEST_PROGRAM))
 CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"
 USER_CFLAGS += -DTEST_PROGRAM=\"$(TEST_PROGRAM)\"

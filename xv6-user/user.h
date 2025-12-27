@@ -40,6 +40,10 @@ int set_priority(int);
 int get_priority(void);
 int getprocsz(void);
 int getpgcnt(void);
+int sem_p(int);
+int sem_v(int);
+int sem_create(int);
+int sem_destroy(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

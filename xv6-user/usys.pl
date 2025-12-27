@@ -53,3 +53,7 @@ entry("munmap");
 entry("set_max_page_in_mem");
 entry("get_swap_count");
 entry("lru_access_notify");
+entry("sem_v");
+entry("sem_p");
+entry("sem_create");
+entry("sem_destroy");
