@@ -243,6 +243,24 @@ make run_test ALGO=LRU # 选择 LRU 页面置换算法，运行测例与 judger 
 
 详细内容参见 [xv6-os-lab-part7 笔记](https://arthals.ink/blog/xv6-os-lab-part7)。
 
+### Part 8
+
+详细介绍了信号量相关机制，并实现了如下系统调用：
+
+- `sem_create`
+- `sem_destroy`
+- `sem_p`
+- `sem_v`
+
+完全支持条件编译与自动化测试，并保证向后兼容：
+
+```shell
+make run_test CASE=MPMC # 选择多生产者多消费者测例，运行测例与 judger 评分测试
+make run_test CASE=PHILOSOPHER # 选择哲学家就餐测例，运行测例与 judger 评分测试
+```
+
+详细内容参见 [xv6-os-lab-part8 笔记](https://arthals.ink/blog/xv6-os-lab-part8)。
+
 > 你也可以在 `notes/` 目录下查看完整的笔记源代码，但推荐在我的博客中查看以获得更好的阅读体验。
 
 ## 📜 LICENSE
