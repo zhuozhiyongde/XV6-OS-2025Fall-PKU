@@ -211,6 +211,19 @@ make run_test TYPE=LAZY # 选择 LAZY 内存机制，运行测例与 judger 评�
 
 详细内容参见 [xv6-os-lab-part5 笔记](https://arthals.ink/blog/xv6-os-lab-part5)。
 
+### Part 6
+
+详细介绍了页面置换相关机制，并完成了 FIFO 和 LRU 两种页面置换算法的实现。
+
+完全支持条件编译与自动化测试，并保证向后兼容：
+
+```shell
+make run_test ALGO=FIFO # 选择 FIFO 页面置换算法，运行测例与 judger 评分测试
+make run_test ALGO=LRU # 选择 LRU 页面置换算法，运行测例与 judger 评分测试
+```
+
+详细内容参见 [xv6-os-lab-part6 笔记](https://arthals.ink/blog/xv6-os-lab-part6)。
+
 ### Part 7
 
 详细介绍了 FAT32 文件系统相关机制，并实现了如下系统调用：
